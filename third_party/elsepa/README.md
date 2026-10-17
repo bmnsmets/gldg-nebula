@@ -33,14 +33,13 @@ The archive also contains Windows executables (`*.exe`), which are not used.
 
 ## Building
 
-`./build.sh` in the repository root builds ELSEPA automatically. The results go to
+The CMake build in the repository root builds ELSEPA automatically. The results go to
 `<build>/elsepa/`, together with the `z_*.den`/`z_*.dfs` data files that ELSEPA
 reads at run time. cstool finds that folder through the `ELSEPA_DIR` environment
 variable, which `<build>/nebula-env.sh` sets.
 
 Offline builds: download the archive on another machine and pass it with
-`./build.sh --elsepa-zip /path/to/elsepa.zip` (or
-`cmake -DELSEPA_ZIP=/path/to/elsepa.zip`). The checksum is verified either way.
+`cmake -DELSEPA_ZIP=/path/to/elsepa.zip`. The checksum is verified either way.
 
 To skip ELSEPA entirely, use `cmake -DNEBULA_BUILD_ELSEPA=OFF`. cstool will
 not work without it.

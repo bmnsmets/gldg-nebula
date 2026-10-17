@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
 # Run the SEM tutorial (https://nebula-simulator.github.io/tutorial-sem/) with
-# the binaries from ./build.sh, and check the results.
+# the binaries from the CMake build, and check the results.
 #
 # Usage: tests/run_tutorial_sem.sh [options] WORKDIR
 #
 # Options:
-#   --build-dir DIR   Build folder of ./build.sh (default: build)
+#   --build-dir DIR   CMake build folder (default: build)
 #   --mat-dir DIR     Folder with existing silicon.mat and pmma.mat; if not
 #                     given, they are generated with cstool in WORKDIR
 #   --no-gpu          Do not run nebula_gpu

@@ -6,8 +6,8 @@ Full instructions on how to use this software are in the
 
 This forked repo is self-contained. 
 Besides the simulator, it includes [cstool](third_party/cstool), which generates the material files Nebula needs,
-and the recipe to build ELSEPA, which cstool depends on. A single script builds
-all of it. 
+and the recipe to build ELSEPA, which cstool depends on. A single CMake build
+makes all of it. 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the origin and licences of the bundled components.
 
 ## Requirements
@@ -25,23 +25,27 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the origin and licences
 ## Building
 
 ```
-./build.sh
+cmake -S . -B build
+cmake --build build -j
 source build/nebula-env.sh
 ```
 
 This builds `nebula_gpu` (if a CUDA compiler is found), `nebula_cpu_mt` and
 `nebula_cpu_edep` in `build/bin`, and ELSEPA in `build/elsepa`. It also creates
 a Python environment with cstool in `build/venv`. Sourcing `build/nebula-env.sh`
-puts all of these on your `PATH`. Run `./build.sh --help` for all options. The
-most useful ones:
+puts all of these on your `PATH`. Options are passed to the first `cmake`
+command. The most useful ones:
 
 | Option | Effect |
 |---|---|
-| `--materials "silicon pmma"` | Also generate `silicon.mat` and `pmma.mat` in `build/materials`, from the parameter files in [third_party/cstool/data/materials](third_party/cstool/data/materials). Takes a few minutes per material. |
-| `--cuda-arch "LIST"` | GPU architectures to compile for (see below) |
-| `--cuda-home DIR` | CUDA toolkit to use. By default `nvcc` is taken from `PATH`, `$CUDA_HOME` or the newest `/usr/local/cuda*`. |
-| `--no-cuda` | CPU version only |
-| `--elsepa-zip FILE` | Build ELSEPA from a local copy of the archive, without downloading |
+| `-DNEBULA_MATERIALS="silicon;pmma"` | Also generate `silicon.mat` and `pmma.mat` in `build/materials`, from the parameter files in [third_party/cstool/data/materials](third_party/cstool/data/materials). Takes a few minutes per material; with `-j` they are generated in parallel. |
+| `-DCMAKE_CUDA_ARCHITECTURES="LIST"` | GPU architectures to compile for (see below) |
+| `-DCMAKE_CUDA_COMPILER=/path/to/nvcc` | CUDA toolkit to use. By default `nvcc` is taken from `$CUDACXX`, `PATH`, `$CUDA_HOME` or the newest `/usr/local/cuda*`. |
+| `-DNEBULA_ENABLE_CUDA=OFF` | CPU version only |
+| `-DELSEPA_ZIP=FILE` | Build ELSEPA from a local copy of the archive, without downloading |
+| `-DNEBULA_PYTHON_ENV=OFF` | Do not create the Python environment with cstool |
+
+Options are stored in `build/CMakeCache.txt`, so later builds keep them.
 
 ### GPU architectures
 
@@ -57,9 +61,9 @@ To choose your own set, pass a
 list:
 
 ```
-./build.sh --cuda-arch "80;90;120"            # native code + PTX for each
-./build.sh --cuda-arch "80-real;120-real"     # native code only
-./build.sh --cuda-arch native                 # only the GPUs in this machine
+cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES="80;90;120"          # native code + PTX for each
+cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES="80-real;120-real"   # native code only
+cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=native               # only the GPUs in this machine
 ```
 
 The PTX can only be used if the NVIDIA driver is at least as new as the CUDA
@@ -69,21 +73,19 @@ Native code does not have this restriction within the same CUDA major version.
 So when building for other machines, list their architectures explicitly instead of relying on the PTX. 
 If `nebula_gpu` has no usable code for a GPU, it stops with a CUDA error message.
 
-Without the script, the plain CMake build works as in upstream Nebula:
-`cmake -S . -B build && cmake --build build`.
-
 ## Running the SEM tutorial
 
 The files of the [SEM tutorial](https://nebula-simulator.github.io/tutorial-sem/)
 are in [tutorial-sem](tutorial-sem):
 
 ```
-./build.sh --materials "silicon pmma"
+cmake -S . -B build -DNEBULA_MATERIALS="silicon;pmma"
+cmake --build build -j
+
 source build/nebula-env.sh
-mkdir sem-run && cd sem-run
-cp ../tutorial-sem/* ../build/materials/*.mat .
+cd tutorial-sem
 python sem-pri.py
-nebula_gpu sem.tri sem.pri silicon.mat pmma.mat > output.det     # or nebula_cpu_mt
+nebula_gpu sem.tri sem.pri ../build/materials/silicon.mat ../build/materials/pmma.mat > output.det     # or nebula_cpu_mt
 python sem-analysis.py output.det
 ```
 

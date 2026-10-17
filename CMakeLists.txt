@@ -8,10 +8,25 @@ set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 
 option(NEBULA_ENABLE_CUDA "Build the GPU version of Nebula if a CUDA compiler is found" ON)
 option(NEBULA_BUILD_ELSEPA "Download and build ELSEPA, which cstool needs" ON)
+option(NEBULA_PYTHON_ENV "Create a Python environment with cstool in the build folder" ON)
+set(NEBULA_MATERIALS "" CACHE STRING
+	"Materials to generate .mat files for, e.g. \"silicon;pmma\" (see third_party/cstool/data/materials)")
 
 
-# Find CUDA, if available
+# Find CUDA, if available. Besides $CUDACXX and PATH, which CMake checks
+# itself, look for nvcc in $CUDA_HOME and the newest /usr/local/cuda*.
+# Override with -DCMAKE_CUDA_COMPILER=/path/to/nvcc.
 if(NEBULA_ENABLE_CUDA)
+	if(NOT CMAKE_CUDA_COMPILER AND NOT DEFINED ENV{CUDACXX})
+		file(GLOB _cuda_dirs /usr/local/cuda*)
+		list(SORT _cuda_dirs COMPARE NATURAL ORDER DESCENDING)
+		find_program(NEBULA_NVCC nvcc
+			PATHS ENV CUDA_HOME ${_cuda_dirs}
+			PATH_SUFFIXES bin)
+		if(NEBULA_NVCC)
+			set(CMAKE_CUDA_COMPILER "${NEBULA_NVCC}")
+		endif()
+	endif()
 	include(CheckLanguage)
 	check_language(CUDA)
 endif()
@@ -109,3 +124,76 @@ if(NEBULA_BUILD_ELSEPA)
 			"cstool needs ELSEPA to generate material files.")
 	endif()
 endif()
+
+
+# Python environment with cstool, for generating material files
+set(_cstool "${PROJECT_SOURCE_DIR}/third_party/cstool")
+set(_venv "${PROJECT_BINARY_DIR}/venv")
+if(NEBULA_PYTHON_ENV)
+	find_package(Python3 3.9 COMPONENTS Interpreter)
+	if(Python3_FOUND)
+		find_program(NEBULA_UV uv)
+		if(NEBULA_UV)
+			set(_venv_create "${NEBULA_UV}" venv --allow-existing
+				--python "${Python3_EXECUTABLE}" "${_venv}")
+			set(_venv_install "${NEBULA_UV}" pip install
+				--python "${_venv}/bin/python" --reinstall-package cstool)
+		else()
+			set(_venv_create "${Python3_EXECUTABLE}" -m venv "${_venv}")
+			set(_venv_install "${_venv}/bin/python" -m pip install --upgrade)
+		endif()
+		file(GLOB_RECURSE _cstool_sources CONFIGURE_DEPENDS
+			"${_cstool}/cstool/*.py" "${_cstool}/apps/*.py")
+		add_custom_command(OUTPUT "${_venv}/.stamp"
+			COMMAND ${_venv_create}
+			COMMAND ${_venv_install} "${_cstool}" numpy matplotlib
+			COMMAND "${CMAKE_COMMAND}" -E touch "${_venv}/.stamp"
+			DEPENDS "${_cstool}/pyproject.toml" ${_cstool_sources}
+			COMMENT "Setting up Python environment with cstool in ${_venv}"
+			VERBATIM)
+		add_custom_target(python_env ALL DEPENDS "${_venv}/.stamp")
+	else()
+		message(WARNING "No Python 3.9 or newer found: not creating the "
+			"Python environment with cstool.")
+	endif()
+endif()
+
+
+# Material files, generated with cstool
+if(NEBULA_MATERIALS)
+	if(NOT TARGET python_env OR NOT TARGET elscata)
+		message(FATAL_ERROR "NEBULA_MATERIALS needs the Python environment "
+			"(NEBULA_PYTHON_ENV) and ELSEPA (NEBULA_BUILD_ELSEPA).")
+	endif()
+	set(_mat_dir "${PROJECT_BINARY_DIR}/materials")
+	file(MAKE_DIRECTORY "${_mat_dir}")
+	set(_mat_files "")
+	foreach(_mat IN LISTS NEBULA_MATERIALS)
+		set(_yaml "${_cstool}/data/materials/${_mat}.yaml")
+		if(NOT EXISTS "${_yaml}")
+			message(FATAL_ERROR "Unknown material ${_mat}: ${_yaml} does not exist.")
+		endif()
+		# cstool writes <name>.mat to the working directory
+		add_custom_command(OUTPUT "${_mat_dir}/${_mat}.mat"
+			COMMAND "${CMAKE_COMMAND}" -E env "ELSEPA_DIR=$<TARGET_FILE_DIR:elscata>"
+				"${_venv}/bin/cstool" "${_yaml}"
+			WORKING_DIRECTORY "${_mat_dir}"
+			DEPENDS "${_yaml}" elscata "${_venv}/.stamp"
+			COMMENT "Generating ${_mat}.mat (this takes several minutes)"
+			VERBATIM)
+		list(APPEND _mat_files "${_mat_dir}/${_mat}.mat")
+	endforeach()
+	add_custom_target(materials ALL DEPENDS ${_mat_files})
+endif()
+
+
+# Script that puts Nebula, ELSEPA and cstool on the PATH
+set(_env "# Source this file to put Nebula, cstool and ELSEPA on your PATH.\n")
+string(APPEND _env "export PATH=\"${PROJECT_BINARY_DIR}/bin\${PATH:+:\$PATH}\"\n")
+if(TARGET elscata)
+	string(APPEND _env "export ELSEPA_DIR=\"$<TARGET_FILE_DIR:elscata>\"\n")
+endif()
+if(TARGET python_env)
+	string(APPEND _env "export PATH=\"${_venv}/bin:\$PATH\"\n")
+endif()
+file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/nebula-env.sh" CONTENT "${_env}")
