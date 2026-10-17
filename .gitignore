@@ -3,6 +3,7 @@ doc/html
 doc/latex
 build-*/
 venv/
+.venv/
 *.mat
 *.pri
 *.det

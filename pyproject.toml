@@ -1,0 +1,12 @@
+[project]
+name = "gldg-nebula"
+version = "0.1.0"
+description = "Python environment for working with Nebula input and output"
+requires-python = ">=3.14"
+dependencies = ["cstool", "numpy", "matplotlib", "safetensors"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+cstool = { path = "third_party/cstool", editable = true }

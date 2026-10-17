@@ -8,9 +8,9 @@ set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 
 option(NEBULA_ENABLE_CUDA "Build the GPU version of Nebula if a CUDA compiler is found" ON)
 option(NEBULA_BUILD_ELSEPA "Download and build ELSEPA, which cstool needs" ON)
-option(NEBULA_PYTHON_ENV "Create a Python environment with cstool in the build folder" ON)
-set(NEBULA_MATERIALS "" CACHE STRING
-	"Materials to generate .mat files for, e.g. \"silicon;pmma\" (see third_party/cstool/data/materials)")
+option(NEBULA_PYTHON_ENV "Set up the project's Python environment (.venv, with cstool) using uv" ON)
+set(NEBULA_MATERIALS "all" CACHE STRING
+	"Materials to generate .mat files for: \"all\" (every .yaml in third_party/cstool/data/materials), a list such as \"silicon;pmma\", or empty for none")
 
 
 # Find CUDA, if available. Besides $CUDACXX and PATH, which CMake checks
@@ -126,49 +126,57 @@ if(NEBULA_BUILD_ELSEPA)
 endif()
 
 
-# Python environment with cstool, for generating material files
+# Python environment of the project (pyproject.toml), with cstool, in
+# <source>/.venv. Managed by uv.
 set(_cstool "${PROJECT_SOURCE_DIR}/third_party/cstool")
-set(_venv "${PROJECT_BINARY_DIR}/venv")
+set(_venv "${PROJECT_SOURCE_DIR}/.venv")
+file(GLOB_RECURSE _cstool_sources CONFIGURE_DEPENDS
+	"${_cstool}/cstool/*.py" "${_cstool}/apps/*.py")
 if(NEBULA_PYTHON_ENV)
-	find_package(Python3 3.9 COMPONENTS Interpreter)
-	if(Python3_FOUND)
-		find_program(NEBULA_UV uv)
-		if(NEBULA_UV)
-			set(_venv_create "${NEBULA_UV}" venv --allow-existing
-				--python "${Python3_EXECUTABLE}" "${_venv}")
-			set(_venv_install "${NEBULA_UV}" pip install
-				--python "${_venv}/bin/python" --reinstall-package cstool)
-		else()
-			set(_venv_create "${Python3_EXECUTABLE}" -m venv "${_venv}")
-			set(_venv_install "${_venv}/bin/python" -m pip install --upgrade)
-		endif()
-		file(GLOB_RECURSE _cstool_sources CONFIGURE_DEPENDS
-			"${_cstool}/cstool/*.py" "${_cstool}/apps/*.py")
-		add_custom_command(OUTPUT "${_venv}/.stamp"
-			COMMAND ${_venv_create}
-			COMMAND ${_venv_install} "${_cstool}" numpy matplotlib
-			COMMAND "${CMAKE_COMMAND}" -E touch "${_venv}/.stamp"
-			DEPENDS "${_cstool}/pyproject.toml" ${_cstool_sources}
-			COMMENT "Setting up Python environment with cstool in ${_venv}"
-			VERBATIM)
-		add_custom_target(python_env ALL DEPENDS "${_venv}/.stamp")
-	else()
-		message(WARNING "No Python 3.9 or newer found: not creating the "
-			"Python environment with cstool.")
+	find_program(NEBULA_UV uv)
+	if(NOT NEBULA_UV)
+		message(FATAL_ERROR "uv not found (https://docs.astral.sh/uv/). It is "
+			"needed for the Python environment; disable that with -DNEBULA_PYTHON_ENV=OFF.")
 	endif()
+	set(_pyproject_files "${PROJECT_SOURCE_DIR}/pyproject.toml" "${_cstool}/pyproject.toml")
+	if(EXISTS "${PROJECT_SOURCE_DIR}/uv.lock")
+		list(APPEND _pyproject_files "${PROJECT_SOURCE_DIR}/uv.lock")
+	endif()
+	# cstool is installed in editable mode, so changes to its code need no
+	# reinstall
+	add_custom_command(OUTPUT "${PROJECT_BINARY_DIR}/python_env.stamp"
+		COMMAND "${NEBULA_UV}" sync --project "${PROJECT_SOURCE_DIR}"
+		COMMAND "${CMAKE_COMMAND}" -E touch "${PROJECT_BINARY_DIR}/python_env.stamp"
+		DEPENDS ${_pyproject_files}
+		COMMENT "Setting up Python environment in ${_venv}"
+		VERBATIM)
+	add_custom_target(python_env ALL DEPENDS "${PROJECT_BINARY_DIR}/python_env.stamp")
 endif()
 
 
 # Material files, generated with cstool
-if(NEBULA_MATERIALS)
+set(_materials "${NEBULA_MATERIALS}")
+if(_materials STREQUAL "all")
+	file(GLOB _yamls CONFIGURE_DEPENDS "${_cstool}/data/materials/*.yaml")
+	set(_materials "")
+	foreach(_yaml IN LISTS _yamls)
+		get_filename_component(_mat "${_yaml}" NAME_WE)
+		list(APPEND _materials "${_mat}")
+	endforeach()
 	if(NOT TARGET python_env OR NOT TARGET elscata)
-		message(FATAL_ERROR "NEBULA_MATERIALS needs the Python environment "
-			"(NEBULA_PYTHON_ENV) and ELSEPA (NEBULA_BUILD_ELSEPA).")
+		message(WARNING "Not generating material files: this needs the Python "
+			"environment (NEBULA_PYTHON_ENV) and ELSEPA (NEBULA_BUILD_ELSEPA).")
+		set(_materials "")
 	endif()
+elseif(_materials AND (NOT TARGET python_env OR NOT TARGET elscata))
+	message(FATAL_ERROR "NEBULA_MATERIALS needs the Python environment "
+		"(NEBULA_PYTHON_ENV) and ELSEPA (NEBULA_BUILD_ELSEPA).")
+endif()
+if(_materials)
 	set(_mat_dir "${PROJECT_BINARY_DIR}/materials")
 	file(MAKE_DIRECTORY "${_mat_dir}")
 	set(_mat_files "")
-	foreach(_mat IN LISTS NEBULA_MATERIALS)
+	foreach(_mat IN LISTS _materials)
 		set(_yaml "${_cstool}/data/materials/${_mat}.yaml")
 		if(NOT EXISTS "${_yaml}")
 			message(FATAL_ERROR "Unknown material ${_mat}: ${_yaml} does not exist.")
@@ -178,7 +186,8 @@ if(NEBULA_MATERIALS)
 			COMMAND "${CMAKE_COMMAND}" -E env "ELSEPA_DIR=$<TARGET_FILE_DIR:elscata>"
 				"${_venv}/bin/cstool" "${_yaml}"
 			WORKING_DIRECTORY "${_mat_dir}"
-			DEPENDS "${_yaml}" elscata "${_venv}/.stamp"
+			DEPENDS "${_yaml}" elscata "${PROJECT_BINARY_DIR}/python_env.stamp"
+				${_cstool_sources}
 			COMMENT "Generating ${_mat}.mat (this takes several minutes)"
 			VERBATIM)
 		list(APPEND _mat_files "${_mat_dir}/${_mat}.mat")
@@ -187,8 +196,8 @@ if(NEBULA_MATERIALS)
 endif()
 
 
-# Script that puts Nebula, ELSEPA and cstool on the PATH
-set(_env "# Source this file to put Nebula, cstool and ELSEPA on your PATH.\n")
+# Script that puts Nebula, ELSEPA and the Python environment on the PATH
+set(_env "# Source this file to put Nebula, ELSEPA and the project's Python tools on your PATH.\n")
 string(APPEND _env "export PATH=\"${PROJECT_BINARY_DIR}/bin\${PATH:+:\$PATH}\"\n")
 if(TARGET elscata)
 	string(APPEND _env "export ELSEPA_DIR=\"$<TARGET_FILE_DIR:elscata>\"\n")

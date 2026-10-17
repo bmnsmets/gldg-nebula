@@ -5,7 +5,7 @@ nebula changelog
   - Require C++17 and CUDA 11.0 or newer (CUDA 13 requires C++17).
   - Build for several GPU architectures by default (compute capability 7.5 to 12.0, plus PTX); configurable through CMAKE_CUDA_ARCHITECTURES.
   - GPU: stop with an error message instead of hanging when kernels cannot run on the GPU.
-  - Bundle cstool and the ENDF data, and build ELSEPA (downloaded at build time); CMake builds everything, including the Python environment with cstool and (optionally) material files.
+  - Bundle cstool and the ENDF data, and build ELSEPA (downloaded at build time); CMake builds everything, including the project's Python environment (.venv, via uv) and the material files for all bundled materials.
   - Add the SEM tutorial and an automated test for it.
 
 1.0.2 (2021-05-26)
