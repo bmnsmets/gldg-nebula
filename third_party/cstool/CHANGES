@@ -1,0 +1,38 @@
+cstool changelog
+
+1.0.7+gldg (bundled with gldg-nebula)
+  - Replace setup.py (distutils, removed in Python 3.12) by pyproject.toml
+  - Bundle the ENDF/B-VII.1 data files; find them with importlib.resources instead of the removed pkg_resources.
+    Download only if they are missing or corrupted, to a user cache folder ($CSTOOL_CACHE_DIR or ~/.cache/cstool)
+  - Use the ELSEPA_DIR environment variable to find ELSEPA, if set
+  - Fix numpy warning about uninitialised memory in interp_ll (results unchanged)
+
+1.0.7 (2024-08-21)
+  - Update deprecated dependencies
+
+1.0.6 (2022-02-05)
+  - Fix URLs to NNDC
+
+1.0.5 (2021-07-25)
+  - Use correct lower bound for secondary electron excitation in semiconductors and insulators -- but properly this time
+
+1.0.4 (2021-02-26)
+  - Fix numerical issue with low momentum transfers in Penn model
+  - Use correct lower bound for secondary electron excitation in semiconductors and insulators
+  - Use .mat file extension instead of double .mat.hdf5.
+
+1.0.3 (2021-02-25)
+  - Fix error when low-energy optical data is lacking
+
+1.0.2 (2020-08-04)
+  - Compute and store elastic transport length
+  - Compute and store stopping power for Penn model
+  - Speedup ICDF calculation for the Penn model
+  - Fix 'invalid value encountered in multiply' warning
+
+1.0.1 (2020-07-14)
+  - Fix VisibleDeprecationWarning introduced with numpy 1.19
+  - Fix several compatibility issues with recent pint & old numpy versions
+
+1.0.0 (2020-06-11)
+  - Initial release

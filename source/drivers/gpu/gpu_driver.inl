@@ -71,6 +71,16 @@ CPU gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::gpu_driver(
 		curand_states, seed, particle_capacity
 	);
 
+	// Kernels cannot run if the executable has no code for this GPU, or if the
+	// driver is too old for the embedded PTX. Fail here instead of hanging later.
+	cudaError_t err = cudaGetLastError();
+	if (err == cudaSuccess)
+		err = cudaDeviceSynchronize();
+	if (err != cudaSuccess)
+		throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err)
+			+ " Check that this GPU's architecture is in CMAKE_CUDA_ARCHITECTURES"
+			" and that the NVIDIA driver supports the CUDA version used to compile Nebula.");
+
 	/*
 	 * Allocate output buffers
 	 */

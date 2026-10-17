@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cstool"
+version = "1.0.7+gldg"
+description = "Computes cross sections for the Nebula simulator"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = ["numpy", "scipy", "pyyaml", "h5py", "numba", "pint>=0.11"]
+
+[project.scripts]
+cstool = "cstool.apps.cstool:main"
+
+[tool.setuptools]
+packages = [
+	"cstool",
+	"cstool.common", "cstool.dielectric_function", "cstool.endf",
+	"cstool.input_data", "cstool.mott", "cstool.phonon",
+	"cstool.apps",
+]
+
+[tool.setuptools.package-dir]
+"cstool" = "cstool"
+"cstool.apps" = "apps"
+
+[tool.setuptools.package-data]
+cstool = [
+	"data/endf_sources.json",
+	"data/endf_data/atomic_relax.zip",
+	"data/endf_data/electrons.zip",
+	"data/endf_data/photoat.zip",
+]

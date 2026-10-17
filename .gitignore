@@ -1,3 +1,11 @@
 build
 doc/html
 doc/latex
+build-*/
+venv/
+*.mat
+*.pri
+*.det
+tutorial-sem/*.png
+__pycache__/
+*.egg-info/

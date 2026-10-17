@@ -2,6 +2,11 @@ nebula changelog
 
 1.0.3 (WIP)
   - (No real code change) Drop support for C++11 and CUDA <9.2; add support for modern versions of CUDA.
+  - Require C++17 and CUDA 11.0 or newer (CUDA 13 requires C++17).
+  - Build for several GPU architectures by default (compute capability 7.5 to 12.0, plus PTX); configurable through CMAKE_CUDA_ARCHITECTURES.
+  - GPU: stop with an error message instead of hanging when kernels cannot run on the GPU.
+  - Bundle cstool and the ENDF data, and build ELSEPA (downloaded at build time); add build.sh to build everything.
+  - Add the SEM tutorial and an automated test for it.
 
 1.0.2 (2021-05-26)
   - Fix bug where only partial simulations were done when a low number of primaries are provided (GPU version).
