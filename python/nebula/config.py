@@ -4,7 +4,7 @@ A run file describes the geometry (a z-map image), the beam and its scan, and
 the detectors that select detected electrons afterwards::
 
     name = "cell65"
-    seed = 1                          # optional
+    seed = 1                          # optional; random if left out
 
     [geometry.zmap]
     file = "cell65morphilt-znom.png"  # relative to the TOML file
@@ -61,6 +61,7 @@ All filters of a detector must hold:
 import dataclasses
 import math
 import os
+import secrets
 import tomllib
 from pathlib import Path
 
@@ -132,6 +133,7 @@ class Config:
     seed: int = 0
     path: Path | None = None
     text: str = ""
+    random_seed: bool = False  # the file has no seed, so it was drawn at random
 
 
 def _number(value, where: str) -> float:
@@ -319,11 +321,16 @@ def load_config(path: str | os.PathLike) -> Config:
     name = _required(data, "name", path.name)
     if not isinstance(name, str) or not name:
         raise ConfigError(f"{path.name}: name must be a non-empty string")
-    seed = data.pop("seed", 0)
+    seed = data.pop("seed", None)
+    random_seed = seed is None
+    if random_seed:
+        seed = secrets.randbelow(2**32)
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**32:
         raise ConfigError(f"{path.name}: seed must be an integer from 0 to 2^32 - 1")
     geometry = _geometry(_required(data, "geometry", path.name), path.parent)
     beam = _beam(_required(data, "beam", path.name))
     detectors = _detectors(_required(data, "detectors", path.name))
     _no_other_keys(data, path.name)
-    return Config(name, geometry, beam, detectors, seed, path.resolve(), text)
+    return Config(
+        name, geometry, beam, detectors, seed, path.resolve(), text, random_seed
+    )

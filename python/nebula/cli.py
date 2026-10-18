@@ -2,8 +2,8 @@
 
 Usage:
 
-- ``nebula RUN.toml [-o OUTPUT] [--seed N] [--cpu | --gpu] [--keep DIR]`` runs
-  the simulation. See `nebula.config` for the file format; the yields per
+- ``nebula RUN.toml [-o OUTPUT] [--seed N] [--cpu | --gpu] [--keep DIR] [-q]``
+  runs the simulation, printing what it runs and its progress on stderr. See `nebula.config` for the file format; the yields per
   detector per pixel, and the height of the highest surface at each beam
   position, are written to a safetensors file (see
   `nebula.simulate.save_results`) and plotted as NAME-plot.png next to it,
@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import dataclasses
+import shutil
 import sys
 from pathlib import Path
 
@@ -45,7 +46,7 @@ examples:
   nebula plot cell65.safetensors --cmap viridis --percentile 100"""
 
 MAIN_USAGE = """\
-nebula RUN.toml [-o OUTPUT] [--seed SEED] [--cpu | --gpu] [--keep DIR] [--no-plot]
+nebula RUN.toml [-o OUTPUT] [--seed SEED] [--cpu | --gpu] [--keep DIR] [--no-plot] [-q]
        nebula plot RESULTS.safetensors [-o FIGURE] [options]"""
 
 MAIN_DESCRIPTION = """\
@@ -69,6 +70,69 @@ examples:
       plots again, with other options
 
 See the documentation of nebula.config for the format of run files."""
+
+
+class _Console:
+    """Information lines and a progress bar for Nebula on stderr, for 'nebula RUN.toml'.
+
+    The bar (tqdm) appears when Nebula first reports progress and is closed
+    before the next information line. tqdm leaves it out when stderr is not a
+    terminal; with ``quiet`` nothing is printed at all.
+    """
+
+    def __init__(self, *, quiet: bool = False, file=None, disable: bool | None = None):
+        self.quiet = quiet
+        self.file = file if file is not None else sys.stderr
+        self.disable = disable
+        self.bar = None
+
+    def report(self, text: str) -> None:
+        self.close()
+        if not self.quiet:
+            print(text, file=self.file, flush=True)
+
+    def progress(self, fraction: float | None) -> None:
+        if self.quiet:
+            return
+        # Nebula counts the primaries it has started; the last ones still run
+        description = (
+            "pre-scan"
+            if fraction is None
+            else "simulating"
+            if fraction < 1
+            else "finishing"
+        )
+        if self.bar is None:
+            from tqdm import tqdm
+
+            size = shutil.get_terminal_size()
+            self.bar = tqdm(
+                total=100,
+                desc=description,
+                file=self.file,
+                disable=self.disable,
+                # Terminals that report no size get 80 x 24, else tqdm hides the
+                # bar; on wide terminals the bar stays 80 columns at most
+                ncols=min(size.columns, 80),
+                nrows=size.lines,
+                bar_format="{l_bar}{bar}| [{elapsed}<{remaining}]",
+            )
+        # Nebula reports once a second, so show every report
+        self.bar.set_description_str(description, refresh=False)
+        if fraction is not None:
+            self.bar.update(100 * fraction - self.bar.n)
+        self.bar.refresh()
+
+    def close(self) -> None:
+        if self.bar is not None:
+            self.bar.close()
+            self.bar = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception) -> None:
+        self.close()
 
 
 def _save_plot(
@@ -183,7 +247,10 @@ def main(argv: list[str] | None = None) -> int:
         "with NAME from the run file)",
     )
     parser.add_argument(
-        "--seed", type=int, help="random seed, overriding the one in the file"
+        "--seed",
+        type=int,
+        help="random seed, overriding the one in the file (default: the file's, "
+        "or a random one if it has none)",
     )
     device = parser.add_mutually_exclusive_group()
     device.add_argument(
@@ -206,14 +273,28 @@ def main(argv: list[str] | None = None) -> int:
         help="do not plot the results (default: plot them as NAME-plot.png next "
         "to the results file)",
     )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="do not print information and progress while running, only the "
+        "summary at the end",
+    )
     args = parser.parse_args(argv)
 
     try:
         config = load_config(args.config)
         if args.seed is not None:
-            config = dataclasses.replace(config, seed=args.seed)
+            config = dataclasses.replace(config, seed=args.seed, random_seed=False)
         gpu = True if args.gpu else False if args.cpu else None
-        result = run(config, gpu=gpu, workdir=args.keep)
+        with _Console(quiet=args.quiet) as console:
+            result = run(
+                config,
+                gpu=gpu,
+                workdir=args.keep,
+                report=console.report,
+                progress=console.progress,
+            )
     except (ConfigError, ValueError, FileNotFoundError, RuntimeError) as error:
         print(f"nebula: {error}", file=sys.stderr)
         return 1
@@ -221,8 +302,6 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output or args.config.parent / f"{config.name}.safetensors"
     save_results(output, config, result)
 
-    nx, ny = result.primaries.shape
-    print(f"{config.name}: {result.triangles} triangles, {nx} x {ny} pixels")
     print(
         f"{result.binary.name}: {result.primaries.sum()} primaries, "
         f"{result.detected} detected, {result.seconds:.1f} s"

@@ -1,4 +1,5 @@
 name = "fins"
+# seed = 42
 
 [geometry.zmap]
 file = "fins-zmap.png" # file to generate the z-map from
@@ -16,15 +17,15 @@ mirrors = true         # add mirrors to the sides of the bounding box
 materials = ["silicon"]
 
 [beam]
-energy = 500        # eV
-z = 55              # nm: above the geometry, below the detector
-axis = [0, 0, -1]   # beam axis
-avg_electrons = 100 # expected number of electrons per pixel
-poisson = true      # randomize number of electrons per pixel
-beam_std = 1.0      # Gaussian standard deviation of the position (xy) of the beam
-x = [-100, 100]     # nm: edges of the scanned area
-y = [-100, 100]     # nm
-step = 1            # nm
+energy = 500         # eV
+z = 55               # nm: above the geometry, below the detector
+axis = [0, 0, -1]    # beam axis
+avg_electrons = 1000 # expected number of electrons per pixel
+poisson = true       # randomize number of electrons per pixel
+beam_std = 1.0       # Gaussian standard deviation of the position (xy) of the beam
+x = [-100, 100]      # nm: edges of the scanned area
+y = [-100, 100]      # nm
+step = 1             # nm
 
 # Post-processing detectors: each filter is a range [min, max) and all must
 # hold. Filters: energy (eV), dx, dy, r (nm, hit position on the detector

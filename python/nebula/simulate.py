@@ -4,6 +4,7 @@ import dataclasses
 import importlib.metadata
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +51,8 @@ def run(
     *,
     gpu: bool | None = None,
     workdir: str | os.PathLike | None = None,
+    report: Callable[[str], None] | None = None,
+    progress: Callable[[float | None], None] | None = None,
 ) -> Result:
     """Run a simulation: make the geometry and primaries, run Nebula, apply detectors.
 
@@ -59,6 +62,10 @@ def run(
             nebula_gpu if there is a GPU.
         workdir: Directory to keep Nebula's input and output files in; by
             default they are removed.
+        report: Called with a line of text about each step: the scan, the
+            geometry and the binary before Nebula starts, and the detectors
+            after it.
+        progress: Called while Nebula runs, see `nebula.runner.run_nebula`.
 
     Raises:
         ValueError: If the beam does not start between the surface and the
@@ -99,6 +106,7 @@ def run(
     if max(map(abs, x)) > box[0] / 2 or max(map(abs, y)) > box[1] / 2:
         raise ValueError(f"the scan must lie inside the box ({box[0]} x {box[1]} nm)")
 
+    nx_scan, ny_scan = len(xs), len(ys)
     rng = np.random.default_rng(config.seed)
     primaries, counts = scan_primaries(
         xs,
@@ -115,6 +123,20 @@ def run(
     directory = config.path.parent if config.path is not None else Path.cwd()
     materials = [find_material(name, [directory]) for name in geometry.materials]
     binary = find_binary(gpu)
+    if report is not None:
+        total = int(counts.sum())
+        report(
+            f"{config.name}: {nx_scan} x {ny_scan} pixels of {step:g} nm, "
+            f"{_count(total)} primaries at {beam.energy:g} eV "
+            f"(≈{total / counts.size:.0f} per pixel), seed {config.seed}"
+            f"{' (random)' if config.random_seed else ''}"
+        )
+        n_materials = len(geometry.materials)
+        report(
+            f"geometry: {len(triangles)} triangles, {n_materials} "
+            f"material{'s' if n_materials != 1 else ''}"
+        )
+        report(f"running {binary.name} ({binary})")
     start = time.perf_counter()
     detected = run_nebula(
         triangles,
@@ -123,9 +145,14 @@ def run(
         seed=config.seed,
         binary=binary,
         workdir=workdir,
+        progress=progress,
     )
     seconds = time.perf_counter() - start
 
+    if report is not None:
+        report(
+            f"applying {len(config.detectors)} detectors to {_count(len(detected))} electrons"
+        )
     images = yield_images(detected, config.detectors, xs, ys, counts)
     result = Result(
         images, counts, xs, ys, binary, len(triangles), len(detected), seconds
@@ -133,6 +160,15 @@ def run(
     # The highest surface Nebula simulated, on the same grid as the images
     result.zmap = height_map(triangles, xs, ys).astype(np.float32)
     return result
+
+
+def _count(n: int) -> str:
+    """A number of electrons, short: 950, 12.3k, 4.0M."""
+    if n >= 999_500:
+        return f"{n / 1e6:.1f}M"
+    if n >= 10_000:
+        return f"{n / 1e3:.1f}k"
+    return str(n)
 
 
 def save_results(path: str | os.PathLike, config: Config, result: Result) -> None:

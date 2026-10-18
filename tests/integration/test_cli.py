@@ -63,8 +63,15 @@ def test_small_run(tmp_path, capsys):
     (tmp_path / "small.toml").write_text(RUN)
 
     assert main([str(tmp_path / "small.toml"), "--cpu"]) == 0
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    out = captured.out
     assert "nebula_cpu_mt" in out
+    # What is run is printed on stderr before it runs; no progress bar, as
+    # stderr is not a terminal
+    assert "small: 6 x 2 pixels of 4 nm" in captured.err
+    assert "geometry:" in captured.err and "1 material" in captured.err
+    assert "running nebula_cpu_mt" in captured.err
+    assert "%|" not in captured.err
     # The results are plotted next to them
     figure = tmp_path / "small-plot.png"
     assert figure.stat().st_size > 0 and f"saved {figure}" in out

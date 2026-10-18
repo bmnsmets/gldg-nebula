@@ -1,10 +1,11 @@
 """Running the Nebula binaries: finding them and their material files."""
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -105,6 +106,7 @@ def run_nebula(
     seed: int,
     binary: str | os.PathLike,
     workdir: str | os.PathLike | None = None,
+    progress: Callable[[float | None], None] | None = None,
 ) -> np.ndarray:
     """Run Nebula and return the detected electrons.
 
@@ -119,6 +121,9 @@ def run_nebula(
         seed: Random seed for Nebula.
         binary: Path of nebula_gpu or nebula_cpu_mt.
         workdir: Directory to keep the files in.
+        progress: Called while Nebula runs, with the fraction of primary
+            electrons it has started simulating (0 to 1), or with None while
+            nebula_gpu does its pre-scan. Nebula reports this once a second.
 
     Returns:
         The detected electrons, with dtype `ELECTRON_DTYPE`.
@@ -140,12 +145,44 @@ def run_nebula(
         ]
         with (
             open(directory / "output.det", "wb") as output,
-            open(directory / "nebula.log", "w") as log,
+            open(directory / "nebula.log", "wb") as log,
         ):
-            result = subprocess.run(command, stdout=output, stderr=log, check=False)
-        if result.returncode != 0:
-            log_text = (directory / "nebula.log").read_text()
+            process = subprocess.Popen(command, stdout=output, stderr=subprocess.PIPE)
+            assert process.stderr is not None
+            _follow_log(process.stderr, log, progress)
+            returncode = process.wait()
+        if returncode != 0:
+            log_text = (directory / "nebula.log").read_text(errors="replace")
             raise RuntimeError(
-                f"{Path(binary).name} failed with exit code {result.returncode}:\n{log_text}"
+                f"{Path(binary).name} failed with exit code {returncode}:\n{log_text}"
             )
         return read_electrons(directory / "output.det")
+
+
+_PROGRESS = re.compile(r"Progress (\d+(?:\.\d+)?)%")
+
+
+def _follow_log(stream, log, progress: Callable[[float | None], None] | None) -> None:
+    """Copy Nebula's stderr to the log, reporting its progress as it comes.
+
+    Nebula rewrites one line with carriage returns: "Executing pre-scan ..."
+    (nebula_gpu) and then "Progress 12.34%" once a second.
+    """
+    last: float | None | str = "nothing"  # the last value reported
+    line = ""  # text since the last carriage return or newline
+    while chunk := os.read(stream.fileno(), 65536):
+        log.write(chunk)
+        log.flush()
+        if progress is None:
+            continue
+        *finished, line = re.split(r"[\r\n]", line + chunk.decode(errors="replace"))
+        for text in [*finished, line]:
+            if (match := _PROGRESS.search(text)) is not None:
+                value: float | None = float(match.group(1)) / 100
+            elif "pre-scan" in text:
+                value = None
+            else:
+                continue
+            if value != last:
+                progress(value)
+                last = value

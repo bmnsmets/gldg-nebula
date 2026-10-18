@@ -13,7 +13,15 @@ authors = [
     { name = "L. Vis", email = "l.vis@tue.nl" },
 ]
 requires-python = ">=3.14"
-dependencies = ["cstool", "numpy", "scipy", "matplotlib", "safetensors", "h5py"]
+dependencies = [
+    "cstool",
+    "numpy>=2.5",
+    "scipy>=1.18.1",
+    "matplotlib>=3.11.2",
+    "safetensors>=0.8",
+    "h5py>=3.16",
+    "tqdm>=4.70.1",
+]
 
 [project.scripts]
 nebula = "nebula.cli:main"

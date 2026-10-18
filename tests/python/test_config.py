@@ -53,10 +53,20 @@ def test_cell65():
     assert config.text == CELL65.read_text()
 
 
+def test_random_seed(directory):
+    # Without a seed, each load draws another (equal with probability 2^-32)
+    path = write(directory, MINIMAL)
+    assert load_config(path).seed != load_config(path).seed
+    config = load_config(
+        write(directory, MINIMAL.replace('name = "test"', 'name = "test"\nseed = 7'))
+    )
+    assert config.seed == 7 and not config.random_seed
+
+
 def test_defaults(directory):
     config = load_config(write(directory, MINIMAL))
     geometry, beam = config.geometry, config.beam
-    assert config.seed == 0
+    assert config.random_seed and 0 <= config.seed < 2**32
     assert geometry.file == (directory / "map.png").resolve()
     assert (geometry.z_min, geometry.tolerance, geometry.pixel_size) == (0, 0.01, 1)
     assert geometry.box_size is None and geometry.z_detector is None
