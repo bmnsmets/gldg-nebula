@@ -38,8 +38,10 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
   are lost. Primaries always start in vacuum. The triangle normal (r1−r0)×(r2−r0)
   points from material_in to material_out.
 - Detector planes detect in both directions; kinetic energy inside a material includes
-  its barrier. nebula_gpu checks for completion once per second, so its timing is
-  rounded up.
+  its barrier.
+- To benchmark, run a binary directly on kept inputs (`nebula X.toml --keep DIR`) and
+  read its "Simulation" timer. nebula_gpu is deterministic for a given seed;
+  nebula_cpu_mt is not.
 - matplotlib 3-D sorts faces by depth only within one collection; plot_triangles
   relies on that.
 

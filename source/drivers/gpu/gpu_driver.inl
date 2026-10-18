@@ -168,6 +168,31 @@ CPU auto gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::get_detect
 {
 	return _particles.get_detected_count();
 }
+template<typename scatter_list_t,
+	typename intersect_t,
+	typename geometry_manager_t
+>
+CPU auto gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::get_running_and_detected_count() const
+-> std::pair<particle_index_t, particle_index_t>
+{
+	const auto capacity = _particles._capacity;
+
+	// Borrow the host output buffer, which is only used by flush_buffered()
+	cudaMemcpy(buffer_hout_status, _particles._status,
+		capacity*sizeof(status_t), cudaMemcpyDeviceToHost);
+
+	particle_index_t N_running = 0;
+	particle_index_t N_detected = 0;
+	for (particle_index_t i = 0; i < capacity; ++i)
+	{
+		if (buffer_hout_status[i] == particle_manager_t::DETECTED)
+			++N_detected;
+		else if (buffer_hout_status[i] != particle_manager_t::TERMINATED)
+			++N_running;
+	}
+
+	return { N_running, N_detected };
+}
 
 
 template<typename scatter_list_t,

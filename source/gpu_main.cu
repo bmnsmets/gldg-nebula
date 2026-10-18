@@ -59,7 +59,9 @@ struct worker_data
 	real min_energy;
 	real max_energy;
 
+	// Guarded by cv_m
 	std::vector<uint32_t> running_count;
+	int workers_done = 0;
 
 	output_stream out_file;
 
@@ -131,8 +133,7 @@ void worker_thread(worker_data& data,
 		{
 			d.do_iteration();
 
-			// TODO: this can be optimised to just one function with one loop.
-			prescan_stats.push_back({ d.get_running_count(), d.get_detected_count() });
+			prescan_stats.push_back(d.get_running_and_detected_count());
 			std::clog << " \rExecuting pre-scan"
 				<< " | running: " << prescan_stats.back().first
 				<< " | detected: " << prescan_stats.back().second;
@@ -204,7 +205,10 @@ void worker_thread(worker_data& data,
 			buff.add(std::array<int, 2>{
 				data.pixels[t].x, data.pixels[t].y});
 		});
-		data.running_count[gpu_id] = running_count;
+		{
+			std::lock_guard<std::mutex> lg(data.cv_m);
+			data.running_count[gpu_id] = running_count;
+		}
 
 		cudaDeviceSynchronize();
 
@@ -215,6 +219,13 @@ void worker_thread(worker_data& data,
 
 	geometry_t::destroy(geometry);
 	nbl::gpu_material_manager<gpu_material_t>::destroy(materials);
+
+	// Tell the main thread that this GPU is done
+	{
+		std::lock_guard<std::mutex> lg(data.cv_m);
+		++data.workers_done;
+	}
+	data.cv.notify_all();
 }
 
 
@@ -272,6 +283,7 @@ int main(int argc, char** argv)
 	std::vector<std::thread> threads;
 	int n_gpus;
 	cudaGetDeviceCount(&n_gpus);
+	data.running_count.resize(n_gpus);
 	std::clog << "Found " << n_gpus << " GPUs:\n";
 	for (int i = 0; i < n_gpus; ++i)
 	{
@@ -281,8 +293,6 @@ int main(int argc, char** argv)
 		threads.push_back(std::thread(worker_thread, std::ref(data), i, random_generator(), i == 0));
 	}
 	std::clog << std::endl;
-
-	data.running_count.resize(n_gpus);
 
 
 	// Load geometry
@@ -407,22 +417,22 @@ int main(int argc, char** argv)
 	}
 
 	timer.start();
-	for (;;)
 	{
-		std::this_thread::sleep_for(std::chrono::seconds(1));
-		auto primaries_to_go = data.primaries.get_primaries_to_go();
-
-		std::clog << " \rProgress "
-			<< std::fixed << std::setprecision(2) << 100 * (1 - ((double)primaries_to_go / primaries.size()))
-			<< "% | Running: ";
-		for (int i = 0; i < n_gpus-1; ++i)
-			std::clog << data.running_count[i] << " | ";
-		std::clog << data.running_count[n_gpus-1];
-
-		if (primaries_to_go == 0)
+		// Print progress every second, until all GPUs are done
+		std::unique_lock<std::mutex> lk(data.cv_m);
+		bool done = false;
+		while (!done)
 		{
-			if (std::all_of(data.running_count.begin(), data.running_count.end(), [](uint32_t i) { return i==0; }))
-				break;
+			done = data.cv.wait_for(lk, std::chrono::seconds(1),
+				[&data, n_gpus]{ return data.workers_done == n_gpus; });
+			auto primaries_to_go = data.primaries.get_primaries_to_go();
+
+			std::clog << " \rProgress "
+				<< std::fixed << std::setprecision(2) << 100 * (1 - ((double)primaries_to_go / primaries.size()))
+				<< "% | Running: ";
+			for (int i = 0; i < n_gpus-1; ++i)
+				std::clog << data.running_count[i] << " | ";
+			std::clog << data.running_count[n_gpus-1];
 		}
 	}
 	for (auto& t : threads)

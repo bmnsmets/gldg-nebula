@@ -92,7 +92,7 @@ void cpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::init(particle_
 	auto this_material_idx = _particles.get_material_index(particle_idx);
 	if (_materials.is_physical(this_material_idx))
 	{
-		const auto this_material = _materials[this_material_idx];
+		const auto& this_material = _materials[this_material_idx];
 
 		// Terminate if we are below the energy threshold
 		// (which is with respect to the vacuum energy)

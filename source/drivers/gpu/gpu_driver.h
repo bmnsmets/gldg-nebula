@@ -111,6 +111,18 @@ public:
 	 */
 	CPU particle_index_t get_detected_count() const;
 
+	/**
+	 * \brief Get the number of running and of detected particles in the simulation.
+	 *
+	 * Gives the same as get_running_count() and get_detected_count(), but
+	 * copies the data from the GPU only once. It must not be used while
+	 * flush_buffered() is running, because it shares its host buffer.
+	 *
+	 * This function blocks the simulation.
+	 *
+	 * \return Pair of (running count, detected count).
+	 */
+	CPU std::pair<particle_index_t, particle_index_t> get_running_and_detected_count() const;
 
 
 	/**
@@ -193,7 +205,7 @@ private:
 	intersect_t _intersect;
 
 	// GPU run settings
-	unsigned int _threads_per_block = 32;
+	unsigned int _threads_per_block = 128;
 	unsigned int _num_blocks = 0;
 
 	// Random number generators

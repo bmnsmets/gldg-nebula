@@ -20,6 +20,7 @@
 #include <numeric>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 
 // Main typedefs
 using geometry_t = nbl::geometry::octree<false>;
@@ -161,9 +162,15 @@ int main(int argc, char** argv)
 	output_stream detect_out(detect_filename);
 	output_stream deposit_out(deposit_filename);
 
+	// Threads that have finished, to stop the progress indicator
+	std::mutex done_m;
+	std::condition_variable done_cv;
+	unsigned int threads_done = 0;
+
 	// Simulation loop
 	auto sim_loop = [&pool, &detect_out, &deposit_out, &pixels,
-			&geometry, &inter, &materials, energy_threshold](uint32_t seed)
+			&geometry, &inter, &materials, energy_threshold,
+			&done_m, &done_cv, &threads_done](uint32_t seed)
 	{
 		driver d(
 			inter, materials, geometry,
@@ -209,6 +216,12 @@ int main(int argc, char** argv)
 
 		detect_buff.flush();
 		deposit_buff.flush();
+
+		{
+			std::lock_guard<std::mutex> lg(done_m);
+			++threads_done;
+		}
+		done_cv.notify_all();
 	};
 
 	// Simulation
@@ -220,15 +233,18 @@ int main(int argc, char** argv)
 	for (unsigned int i = 0; i < n_threads; ++i)
 		threads.push_back(std::thread(sim_loop, random_generator()));
 
-	// Progress indicator
-	for (;;)
+	// Progress indicator, every second until all threads are done
 	{
-		std::this_thread::sleep_for(std::chrono::seconds(1));
-		auto primaries_to_go = pool.get_primaries_to_go();
-		std::clog << " \rProgress "
-			<< std::fixed << std::setprecision(2) << 100 * (1 - ((double)primaries_to_go / primaries.size())) << "%";
-		if (primaries_to_go == 0)
-			break;
+		std::unique_lock<std::mutex> lk(done_m);
+		bool done = false;
+		while (!done)
+		{
+			done = done_cv.wait_for(lk, std::chrono::seconds(1),
+				[&threads_done, n_threads]{ return threads_done == n_threads; });
+			auto primaries_to_go = pool.get_primaries_to_go();
+			std::clog << " \rProgress "
+				<< std::fixed << std::setprecision(2) << 100 * (1 - ((double)primaries_to_go / primaries.size())) << "%";
+		}
 	}
 
 	for (auto& t : threads)
