@@ -6,6 +6,7 @@ cstool changelog
     Download only if they are missing or corrupted, to a user cache folder ($CSTOOL_CACHE_DIR or ~/.cache/cstool)
   - Use the ELSEPA_DIR environment variable to find ELSEPA, if set
   - Fix numpy warning about uninitialised memory in interp_ll (results unchanged)
+  - Read string attributes of .mat files correctly with h5py 3 (datafile.get_property, get_dataset)
 
 1.0.7 (2024-08-21)
   - Update deprecated dependencies

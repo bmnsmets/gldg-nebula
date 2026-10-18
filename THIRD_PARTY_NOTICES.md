@@ -22,6 +22,8 @@ Generates the material files that Nebula reads.
   - The ELSEPA folder can be given with the `ELSEPA_DIR` environment variable.
   - A numpy warning about uninitialised memory is fixed. The results are
     unchanged.
+  - Reading .mat files with `datafile.get_property` and `get_dataset` works
+    with h5py 3, which returns string attributes as `str` instead of `bytes`.
   - The version is marked `1.0.7+gldg`.
 
 ## ENDF/B-VII.1 data — `third_party/cstool/cstool/data/endf_data/`
@@ -45,7 +47,7 @@ Publications that use it must cite Comput. Phys. Commun. 165 (2005) 157,
 doi:10.1016/j.cpc.2004.09.006. Details are in
 [third_party/elsepa/README.md](third_party/elsepa/README.md).
 
-## Tutorial files — `tutorial-sem/`
+## Tutorial files — `examples/tutorial-sem/`
 
 `sem.tri`, `sem-pri.py`, `sem-analysis.py` and `reels-analysis.py` come from
 the Nebula documentation, https://nebula-simulator.github.io/ (Nebula-simulator).

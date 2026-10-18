@@ -43,7 +43,7 @@ Options for the first `cmake` command (they are remembered for later builds):
 | Option | Effect |
 |---|---|
 | `-DNEBULA_MATERIALS="silicon;pmma"` | Generate only these materials (default `all`; empty for none) |
-| `-DCMAKE_CUDA_ARCHITECTURES="LIST"` | GPU architectures to compile for (see below) |
+| `-DCMAKE_CUDA_ARCHITECTURES="..."` | GPU architectures to compile for (see below) |
 | `-DCMAKE_CUDA_COMPILER=/path/to/nvcc` | CUDA compiler to use. Default: from `$CUDACXX`, `PATH`, `$CUDA_HOME` or the newest `/usr/local/cuda*` |
 | `-DNEBULA_ENABLE_CUDA=OFF` | CPU version only |
 | `-DELSEPA_ZIP=FILE` | Build ELSEPA from a local copy of the archive |
@@ -79,12 +79,12 @@ usable code for a GPU, it stops with a CUDA error message.
 ## Running the SEM tutorial
 
 The files of the [SEM tutorial](https://nebula-simulator.github.io/tutorial-sem/)
-are in [tutorial-sem](tutorial-sem). After building:
+are in [examples/tutorial-sem](examples/tutorial-sem). After building:
 
 ```
-cd tutorial-sem
+cd examples/tutorial-sem
 python sem-pri.py
-nebula_gpu sem.tri sem.pri ../build/materials/silicon.mat ../build/materials/pmma.mat > output.det     # or nebula_cpu_mt
+nebula_gpu sem.tri sem.pri ../../build/materials/silicon.mat ../../build/materials/pmma.mat > output.det     # or nebula_cpu_mt
 python sem-analysis.py output.det
 ```
 

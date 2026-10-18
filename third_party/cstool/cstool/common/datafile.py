@@ -1,7 +1,14 @@
+import numbers
+
 import h5py
 import numpy as np
 
 from cstool.common import units
+
+
+def _to_str(value):
+    """h5py 3 returns string attributes as str, h5py 2 as bytes."""
+    return value.decode("ascii") if isinstance(value, bytes) else str(value)
 
 
 class datafile:
@@ -62,12 +69,12 @@ class datafile:
 
     def get_property(self, key):
         value = self.file.attrs[key]
-        if isinstance(value, (float, int)):
+        if isinstance(value, (str, bytes)):
+            return _to_str(value)
+        elif isinstance(value, numbers.Real):
             return value
-        elif isinstance(value, bytes):
-            return value.decode("ascii")
         else:
-            return value[0] * units(value[1].decode("ascii"))
+            return value["value"] * units(_to_str(value["unit"]))
 
     # Utility functions for use in a with: statement
     def __enter__(self):
@@ -137,7 +144,7 @@ class datafile_group:
 
     def get_dataset(self, name):
         h5_dset = self.group[name]
-        data = np.copy(h5_dset[()]) * units(h5_dset.attrs["units"].decode("ascii"))
+        data = np.copy(h5_dset[()]) * units(_to_str(h5_dset.attrs["units"]))
         return data
 
 

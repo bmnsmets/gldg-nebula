@@ -40,7 +40,7 @@ source "$BUILD_DIR/nebula-env.sh"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
-cp "$SOURCE_DIR"/tutorial-sem/{sem.tri,sem-pri.py,sem-analysis.py} .
+cp "$SOURCE_DIR"/examples/tutorial-sem/{sem.tri,sem-pri.py,sem-analysis.py} .
 
 # Material files
 for m in silicon pmma; do
