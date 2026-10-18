@@ -7,7 +7,9 @@ venv/
 *.mat
 *.pri
 *.det
+*.safetensors
 examples/tutorial-sem/*.png
+examples/z-map/*-plot.png
 __pycache__/
 *.egg-info/
 .vscode

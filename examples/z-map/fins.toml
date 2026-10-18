@@ -1,0 +1,60 @@
+name = "fins"
+
+[geometry.zmap]
+file = "fins-zmap.png" # file to generate the z-map from
+tolerance = 0.01       # error tolerance for tessellation
+pixel_size = 1         # nm
+box_size = [500, 500]  # nm x nm
+z_min = 0              # nm
+z_max = 50             # nm
+z_terminator = -1000   # nm
+z_detector = 60        # nm
+mirrors = true         # add mirrors to the sides of the bounding box
+
+# 0-indexed list of materials, see build/materials/
+# zmap based geometries currently only allow a single material
+materials = ["silicon"]
+
+[beam]
+energy = 500        # eV
+z = 55              # nm: above the geometry, below the detector
+axis = [0, 0, -1]   # beam axis
+avg_electrons = 100 # expected number of electrons per pixel
+poisson = true      # randomize number of electrons per pixel
+beam_std = 1.0      # Gaussian standard deviation of the position (xy) of the beam
+x = [-100, 100]     # nm: edges of the scanned area
+y = [-100, 100]     # nm
+step = 1            # nm
+
+# Post-processing detectors: each filter is a range [min, max) and all must
+# hold. Filters: energy (eV), dx, dy, r (nm, hit position on the detector
+# plane relative to the beam), polar (degrees from +z), azimuth (degrees from
+# +x, counter-clockwise; min > max wraps around 0).
+
+[detectors.se]
+energy = [0, 50] # eV
+
+[detectors.bse]
+energy = [50, inf] # eV
+polar = [10, 55]
+
+# BSE quadrant detectors, by the direction the electrons travel in
+[detectors.bse_q1]
+energy = [50, inf]
+azimuth = [0, 90]
+polar = [10, 55]
+
+[detectors.bse_q2]
+energy = [50, inf]
+azimuth = [90, 180]
+polar = [10, 55]
+
+[detectors.bse_q3]
+energy = [50, inf]
+azimuth = [180, 270]
+polar = [10, 55]
+
+[detectors.bse_q4]
+energy = [50, inf]
+azimuth = [270, 360]
+polar = [10, 55]

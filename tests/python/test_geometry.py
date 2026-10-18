@@ -5,7 +5,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from nebula.geometry import plot_triangles, triangulate_zmap, zmap_from_png
+from nebula.geometry import (
+    height_map,
+    plot_triangles,
+    triangulate_zmap,
+    zmap_from_png,
+)
 from nebula.io import (
     TRIANGLE_DTYPE,
     SpecialMaterial,
@@ -105,7 +110,7 @@ def surface_of(triangles, material=0):
     return triangles[triangles["material_in"] == material]
 
 
-def surface_height(surface, xy):
+def mesh_height(surface, xy):
     """Height of the triangulated surface at points xy (N, 2)."""
     v = surface["vertices"].astype(np.float64)
     a, b, c = v[:, 0, :2], v[:, 1, :2], v[:, 2, :2]
@@ -180,7 +185,7 @@ def test_plane_needs_few_triangles():
     # Corners plus some samples next to them: the edge values are held for half
     # a pixel up to the box edges, so the surface is not exactly the plane
     assert len(triangles) <= 18
-    heights = surface_height(triangles, sample_positions(*zmap.shape))
+    heights = mesh_height(triangles, sample_positions(*zmap.shape))
     max_error = 0.01 * (zmap.max() - zmap.min())
     assert np.max(np.abs(heights - zmap.ravel())) <= max_error + 1e-4
 
@@ -195,12 +200,12 @@ def test_pixel_size():
         [-100, 100],
     )
     max_error = 0.01 * (zmap.max() - zmap.min()) + 1e-4
-    heights = surface_height(surface, sample_positions(40, 40, pixel_size=2.5))
+    heights = mesh_height(surface, sample_positions(40, 40, pixel_size=2.5))
     np.testing.assert_allclose(heights, zmap.ravel(), atol=max_error)
     # Padded with zeros from one pixel beyond the last pixel centre (48.75
     # nm); the padding is triangulated with the rest, so also within tolerance
     np.testing.assert_allclose(
-        surface_height(surface, np.array([[51.25, 0], [90, 0]])), 0, atol=max_error
+        mesh_height(surface, np.array([[51.25, 0], [90, 0]])), 0, atol=max_error
     )
 
 
@@ -210,7 +215,7 @@ def test_smooth_bump_within_tolerance(height, tolerance):
     max_error = tolerance * (zmap.max() - zmap.min())
     triangles = triangulate_zmap(zmap, tolerance=tolerance)
     surface = surface_of(triangles)
-    heights = surface_height(surface, sample_positions(*zmap.shape))
+    heights = mesh_height(surface, sample_positions(*zmap.shape))
     assert not np.any(np.isnan(heights))
     # Allow for rounding the vertices to float32
     assert np.max(np.abs(heights - zmap.ravel())) <= max_error + 1e-4
@@ -276,7 +281,7 @@ def test_padding_thinner_than_a_pixel():
     # From the last pixel centre (4.5 nm) to 0 at the box edge (5.25 nm)
     points = np.array([[0, 0], [4.5, 0], [4.875, 0], [5.25, 0]])
     np.testing.assert_allclose(
-        surface_height(triangles, points), [7, 7, 3.5, 0], atol=1e-5
+        mesh_height(triangles, points), [7, 7, 3.5, 0], atol=1e-5
     )
 
 
@@ -299,7 +304,7 @@ def test_padding_places_zmap_in_middle():
     v = surface["vertices"]
     np.testing.assert_array_equal([v[..., 0].min(), v[..., 0].max()], [-250, 250])
     np.testing.assert_array_equal([v[..., 1].min(), v[..., 1].max()], [-250, 250])
-    heights = surface_height(surface, np.array([[30.5, -39.5], [200, 200], [-240, 0]]))
+    heights = mesh_height(surface, np.array([[30.5, -39.5], [200, 200], [-240, 0]]))
     np.testing.assert_allclose(heights, [20, 0, 0], atol=1e-5)
 
 
@@ -311,7 +316,7 @@ def test_padding_one_axis():
     # From the last pixel centre (x = 49.5) to the zero sample one pixel further out
     points = np.array([[0, 0], [49.5, 0], [50, 0], [50.5, 0], [100, 0], [-100, 20]])
     np.testing.assert_allclose(
-        surface_height(triangles, points), [7, 7, 3.5, 0, 0, 0], atol=1e-5
+        mesh_height(triangles, points), [7, 7, 3.5, 0, 0, 0], atol=1e-5
     )
 
 
@@ -372,6 +377,45 @@ def test_triangulation_round_trip(tmp_path):
     triangles = triangulate_zmap(gaussian_bump(60), box_size=100)
     write_tri(tmp_path / "bump.tri", triangles)
     np.testing.assert_array_equal(read_tri(tmp_path / "bump.tri"), triangles)
+
+
+def test_height_map():
+    zmap = gaussian_bump(100)
+    triangles = triangulate_zmap(zmap, box_size=200)
+    centres = np.arange(100) - 49.5
+    heights = height_map(triangles, centres, centres)
+    assert heights.shape == (100, 100)
+    # The same as interpolating the surface triangles, and within tolerance
+    np.testing.assert_allclose(
+        heights.ravel(),
+        mesh_height(surface_of(triangles), sample_positions(100, 100)),
+        atol=1e-4,
+    )
+    assert np.max(np.abs(heights - zmap)) <= 0.01 * np.ptp(zmap) + 1e-4
+    # Padding is 0, outside the box is NaN; any order of coordinates
+    grid = height_map(triangles, [150.0, 90.0, 0.0], [0.0])
+    assert np.isnan(grid[0, 0])
+    assert grid[1, 0] == pytest.approx(0, abs=0.01 * np.ptp(zmap))
+    assert grid[2, 0] == pytest.approx(heights[49:51, 49:51].mean(), abs=1)
+
+
+def test_height_map_ignores_special_triangles():
+    # Mirrors, detector (15 nm) and terminator (-10 um) are not surfaces
+    triangles = triangulate_zmap(np.full((10, 10), 5.0), box_size=20)
+    np.testing.assert_allclose(height_map(triangles, [0, 9.9], [0])[:, 0], [5, 0])
+
+
+def test_height_map_takes_highest():
+    # The tutorial's PMMA line has vertical walls and lies on silicon: at
+    # its walls and on top, the highest height (30 nm) counts
+    heights = height_map(read_tri(SEM_TRI), [-100, -20, 0, 20, 100, 600], [0])
+    np.testing.assert_array_equal(heights[:5, 0], [0, 30, 30, 30, 0])
+    assert np.isnan(heights[5, 0])  # outside the 1 um box
+
+
+def test_height_map_without_material():
+    planes = read_tri(SEM_TRI)[-4:]  # mirrors and terminator only
+    assert np.all(np.isnan(height_map(planes, [0, 10], [0, 10])))
 
 
 # Plotting

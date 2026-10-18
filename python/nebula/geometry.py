@@ -25,7 +25,7 @@ from scipy.spatial import Delaunay
 
 from .io.triangles import SpecialMaterial, make_triangles
 
-__all__ = ["plot_triangles", "triangulate_zmap", "zmap_from_png"]
+__all__ = ["height_map", "plot_triangles", "triangulate_zmap", "zmap_from_png"]
 
 # ITU-R 601 luma, as used by Pillow to convert colour images to greyscale
 _LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114])
@@ -308,6 +308,68 @@ def triangulate_zmap(
             walls += [[a, b, c], [a, c, d]]
         triangles.append(make_triangles(walls, [SpecialMaterial.MIRROR] * 2))
     return np.concatenate(triangles)
+
+
+def height_map(
+    triangles: np.ndarray, xs: npt.ArrayLike, ys: npt.ArrayLike
+) -> np.ndarray:
+    """Height of the highest surface of a geometry on a grid, seen from above.
+
+    At each grid point (xs[ix], ys[iy]), this is the largest height of the
+    triangles that have a material on at least one side (interfaces between a
+    material and vacuum or another material) and that cover the point seen
+    from above. Mirrors, detectors, terminators and no-op triangles are left
+    out. This works for any geometry: where it has several heights at a point,
+    as at vertical walls or overhangs, the highest is taken. Vertical
+    triangles themselves are skipped; the top edge of a wall is part of the
+    triangles next to it.
+
+    Args:
+        triangles: Array with dtype `TRIANGLE_DTYPE`.
+        xs, ys: Coordinates of the grid in nm.
+
+    Returns:
+        The heights in nm, float64 ``[ix, iy]`` with shape (len(xs), len(ys));
+        NaN where no triangle covers the point.
+    """
+    triangles = np.asarray(triangles)
+    xs = np.asarray(xs, dtype=np.float64)
+    ys = np.asarray(ys, dtype=np.float64)
+    heights = np.full((len(xs), len(ys)), np.nan)
+
+    has_material = (triangles["material_in"] >= 0) | (triangles["material_out"] >= 0)
+    polys = triangles["vertices"][has_material].astype(np.float64)
+    a, b, c = polys[:, 0], polys[:, 1], polys[:, 2]
+    det = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (
+        c[:, 0] - a[:, 0]
+    )
+    vertical = det == 0
+
+    # Work on sorted coordinates, so that each triangle's bounding box is a
+    # block of grid points
+    x_order, y_order = np.argsort(xs), np.argsort(ys)
+    x_sorted, y_sorted = xs[x_order], ys[y_order]
+    sorted_heights = np.full_like(heights, np.nan)
+    margin = 1e-6  # nm, so that points on edges count
+    low, high = polys[..., :2].min(axis=1), polys[..., :2].max(axis=1)
+    i0 = np.searchsorted(x_sorted, low[:, 0] - margin, side="left")
+    i1 = np.searchsorted(x_sorted, high[:, 0] + margin, side="right")
+    j0 = np.searchsorted(y_sorted, low[:, 1] - margin, side="left")
+    j1 = np.searchsorted(y_sorted, high[:, 1] + margin, side="right")
+    for t in np.flatnonzero(~vertical & (i1 > i0) & (j1 > j0)):
+        px = x_sorted[i0[t] : i1[t], None]
+        py = y_sorted[None, j0[t] : j1[t]]
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = polys[t]
+        weight_a = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / det[t]
+        weight_b = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / det[t]
+        weight_c = 1 - weight_a - weight_b
+        inside = (weight_a >= -1e-9) & (weight_b >= -1e-9) & (weight_c >= -1e-9)
+        z = np.where(inside, weight_a * az + weight_b * bz + weight_c * cz, np.nan)
+        block = sorted_heights[i0[t] : i1[t], j0[t] : j1[t]]
+        np.fmax(block, z, out=block)
+
+    heights[np.ix_(x_order, y_order)] = sorted_heights
+    return heights
 
 
 # Plot styles of special materials, drawn as outlines: label, colour

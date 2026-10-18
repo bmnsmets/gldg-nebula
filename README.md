@@ -54,8 +54,7 @@ Options for the first `cmake` command (they are remembered for later builds):
 By default, `nebula_gpu` contains native code for compute capabilities 7.5,
 8.0, 8.6, 8.9, 9.0, 10.0 and 12.0 (Turing to Blackwell, as far as your CUDA
 compiler supports them), plus PTX for the newest, which the driver can compile
-for future GPUs. Native code also runs on GPUs with a higher minor version
-(e.g. 8.6 code on 8.7). To choose your own set, pass a
+for future GPUs. To choose your own set, pass a
 [CMAKE_CUDA_ARCHITECTURES](https://cmake.org/cmake/help/latest/prop_tgt/CUDA_ARCHITECTURES.html)
 list:
 
@@ -70,37 +69,84 @@ cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES="80-real;120-real"
 cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=native               
 ```
 
-PTX only loads if the NVIDIA driver is at least as new as the CUDA toolkit
-that compiled it (PTX from CUDA 13.4 fails on a CUDA 13.2 driver); native code
-has no such restriction within a CUDA major version. So when building for
-other machines, list their architectures explicitly. If `nebula_gpu` has no
-usable code for a GPU, it stops with a CUDA error message.
-
-## Running the SEM tutorial
-
-The files of the [SEM tutorial](https://nebula-simulator.github.io/tutorial-sem/)
-are in [examples/tutorial-sem](examples/tutorial-sem). After building:
-
-```
-cd examples/tutorial-sem
-python sem-pri.py
-nebula_gpu sem.tri sem.pri ../../build/materials/silicon.mat ../../build/materials/pmma.mat > output.det     # or nebula_cpu_mt
-python sem-analysis.py output.det
-```
-
-`tests/run_tutorial_sem.sh` runs these steps on both the GPU and the CPU, and
-checks the result:
-
-```
-tests/run_tutorial_sem.sh --mat-dir build/materials /tmp/sem-run
-```
 
 ## Python environment
 
 The repository is a uv project ([pyproject.toml](pyproject.toml)); the build
 runs `uv sync` to set up `.venv`, with cstool installed in editable mode. Use it through
-`build/nebula-env.sh`, `.venv/bin/activate` or `uv run`, and add packages with
+ `source .venv/bin/activate` or `uv run`, and add packages with
 `uv add <package>`.
+
+
+## Running the z-map examples
+
+[examples/z-map](examples/z-map) contains simulations of SEM images of
+surfaces described by a height map (z-map): a greyscale PNG in which black is
+the lowest and white the highest point. Each example is a run file (TOML) next
+to its PNG:
+
+| Run file | Geometry | Material |
+|---|---|---|
+| [cell65.toml](examples/z-map/cell65.toml) | [cell65-zmap.png](examples/z-map/cell65-zmap.png) | copper |
+| [fins.toml](examples/z-map/fins.toml) | [fins-zmap.png](examples/z-map/fins-zmap.png) | silicon |
+
+After [building](#building) (the material files used must be in
+`build/materials`), run an example with:
+
+```
+uv run nebula examples/z-map/cell65.toml
+```
+
+This turns the PNG into a triangle mesh, makes the primary electrons for the
+beam scan, runs `nebula_gpu` (or `nebula_cpu_mt` if there is no GPU; `--cpu`
+forces it), applies the detectors of the run file, and saves next to it:
+
+- `cell65.safetensors`: the yield (detected electrons per primary electron)
+  per pixel of each detector, the height of the surface at each beam position
+  (`zmap`), the number of primary electrons per pixel, and the run file itself;
+- `cell65-plot.png`: a plot of the surface height and of each detector's
+  yield map.
+
+To make the plot again, for example of only some detectors:
+
+```
+uv run nebula plot examples/z-map/cell65.safetensors --detectors se bse
+```
+
+`uv run nebula -h` and `uv run nebula plot -h` list all options. To load the
+results in Python:
+
+```python
+from safetensors.numpy import load_file
+
+results = load_file("examples/z-map/cell65.safetensors")
+se = results["se"]  # yield per pixel, indexed [ix, iy], x to the right and y up
+```
+
+### Run files
+
+A run file has four parts; the comments in the examples explain each value:
+
+- `[geometry.zmap]`: the PNG, its pixel size, the heights of black and white,
+  the size of the simulated box, the depth of the terminator plane (electrons
+  that reach it are removed; a few times the electron range at the beam energy
+  is enough), the height of the detector plane, and the material, by the name
+  of its file in `build/materials`.
+- `[beam]`: the energy and starting height of the primary electrons, the
+  number of electrons per pixel, the size of the beam spot, and the scanned
+  area (`x`, `y`: its outer edges in nm; `step`: the pixel size).
+- `[detectors.<name>]`: detectors that select from the electrons reaching the
+  detector plane, each giving one yield map. Every filter is a range
+  `[min, max)` (`inf` for no upper limit) on the energy (eV), the angle
+  between the electron's direction and the beam axis (`polar`, degrees), the
+  direction around the axis (`azimuth`, degrees from +x, counter-clockwise),
+  or the position on the detector plane relative to the beam (`dx`, `dy`, `r`,
+  nm). For example, secondary electrons are `energy = [0, 50]`, and a BSE
+  quadrant detector is `energy = [50, inf]` with an `azimuth` quarter and a
+  `polar` range set by the detector's hole and outer radius.
+
+To simulate your own surface, copy one of the examples, point `file` to your
+PNG and adjust the values.
 
 
 ## Citing
