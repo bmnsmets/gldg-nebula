@@ -1,5 +1,8 @@
 #include "../config/config.h"
 #include "load_pri_file.h"
+#include <algorithm>
+#include <functional>
+#include <limits>
 #include <numeric>
 #include <fstream>
 #include <iostream>
@@ -204,25 +207,25 @@ void sort_pri_file(
 		};
 	}
 
-	// Sort by Morton ordering
+	// Sort by Morton ordering. An axis along which all primaries start at the
+	// same coordinate (usually z) contributes nothing.
 	const vec3 vsize = vmax - vmin;
-	auto permutation = sort_permutation(particle_vec,
-		[vmin, vsize](particle const & p1, particle const & p2) -> bool
+	const auto grid = [](real value, real min, real size) -> uint16_t
 	{
-		const vec3 p1n = (p1.pos - vmin);
-		const vec3 p2n = (p2.pos - vmin);
-
-		const auto m1 = morton(
-			static_cast<uint16_t>(p1n.x / vsize.x * std::numeric_limits<uint16_t>::max()),
-			static_cast<uint16_t>(p1n.y / vsize.y * std::numeric_limits<uint16_t>::max()),
-			static_cast<uint16_t>(p1n.z / vsize.z * std::numeric_limits<uint16_t>::max()));
-		const auto m2 = morton(
-			static_cast<uint16_t>(p2n.x / vsize.x * std::numeric_limits<uint16_t>::max()),
-			static_cast<uint16_t>(p2n.y / vsize.y * std::numeric_limits<uint16_t>::max()),
-			static_cast<uint16_t>(p2n.z / vsize.z * std::numeric_limits<uint16_t>::max()));
-
-		return m1 < m2;
+		if (!(size > 0))
+			return 0;
+		return static_cast<uint16_t>((value - min) / size * std::numeric_limits<uint16_t>::max());
+	};
+	std::vector<uint64_t> keys(particle_vec.size());
+	std::transform(particle_vec.begin(), particle_vec.end(), keys.begin(),
+		[&](particle const & p) -> uint64_t
+	{
+		return morton(
+			grid(p.pos.x, vmin.x, vsize.x),
+			grid(p.pos.y, vmin.y, vsize.y),
+			grid(p.pos.z, vmin.z, vsize.z));
 	});
+	auto permutation = sort_permutation(keys, std::less<uint64_t>());
 
 	particle_vec = apply_permutation(particle_vec, permutation);
 	pixel_vec = apply_permutation(pixel_vec, permutation);
