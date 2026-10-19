@@ -3,8 +3,14 @@
 import math
 
 import numpy as np
+import pytest
 from nebula.config import Detector
-from nebula.imaging import detector_mask, electron_quantities, yield_images
+from nebula.imaging import (
+    DetectorCounter,
+    detector_mask,
+    electron_quantities,
+    yield_images,
+)
 from nebula.io import make_electrons
 
 XS = np.array([0.0, 10.0])
@@ -120,3 +126,41 @@ def test_yield_images_chunked_matches_reference():
             ).astype(np.float32)
             np.testing.assert_array_equal(images[detector.name], expected)
     np.testing.assert_array_equal(np.isnan(images["all"]), primaries == 0)
+
+
+def test_detector_counter_batches_match_yield_images():
+    # Batches of uneven sizes, split across chunks, give exactly yield_images
+    rng = np.random.default_rng(2)
+    n = 3000
+    position = np.column_stack(
+        [rng.uniform(-5, 15, n), rng.uniform(-5, 25, n), np.full(n, 60)]
+    )
+    pixel = np.column_stack([rng.integers(0, 2, n), rng.integers(0, 3, n)])
+    e = electrons(position, rng.normal(size=(n, 3)), rng.exponential(60, n), pixel)
+    primaries = np.array([[40, 0, 30], [20, 25, 0]])
+    detectors = [
+        Detector("all"),
+        Detector("se", energy=(0, 50)),
+        Detector("wrap", azimuth=(300, 60.5)),
+    ]
+    expected = yield_images(e, detectors, XS, YS, primaries)
+    with DetectorCounter(detectors, XS, YS, chunk_size=100, workers=3) as counter:
+        start = 0
+        for size in [0, 1, 99, 250, 7, 1000, 3]:
+            counter.add(e[start : start + size])
+            start += size
+        counter.add(e[start:])
+        images = counter.images(primaries)
+    assert images.keys() == expected.keys()
+    for name, image in images.items():
+        np.testing.assert_array_equal(image, expected[name])
+
+
+def test_detector_counter_raises_errors():
+    bad = np.zeros(10, dtype=[("x", "f4")])  # no pixel fields
+    with (
+        DetectorCounter([Detector("all")], XS, YS, chunk_size=4) as counter,
+        pytest.raises(ValueError),  # from add or counts, whichever sees it first
+    ):
+        counter.add(bad)
+        counter.counts()

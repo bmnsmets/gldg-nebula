@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 from nebula.beam import scan_positions, scan_primaries
+from nebula.io import make_electrons
 
 
 def test_scan_positions():
@@ -54,3 +55,76 @@ def test_poisson_and_spread():
     offset = electrons["x"] - xs[electrons["px"]]
     assert abs(offset.std() - 2.0) < 0.05
     assert np.all(electrons["dy"] == 1)
+
+
+def reference_scan_primaries(
+    xs, ys, *, energy, z, axis, avg_electrons, poisson, beam_std, rng
+):
+    # The straightforward implementation scan_primaries replaced
+    xs, ys = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
+    shape = (len(xs), len(ys))
+    if poisson:
+        counts = rng.poisson(avg_electrons, size=shape)
+    else:
+        counts = np.full(shape, round(avg_electrons))
+    pixel = np.repeat(np.arange(counts.size), counts.ravel())
+    ix, iy = np.unravel_index(pixel, shape)
+    position = np.column_stack(
+        [
+            xs[ix] + rng.normal(0, beam_std, len(pixel)),
+            ys[iy] + rng.normal(0, beam_std, len(pixel)),
+            np.full(len(pixel), z),
+        ]
+    )
+    electrons = make_electrons(position, axis, energy, np.column_stack([ix, iy]))
+    return electrons, counts
+
+
+@pytest.mark.parametrize(
+    ("axis", "poisson", "beam_std"),
+    [((0, 0, -1), True, 1.5), ((0.3, -2, -5), False, 0.0), ((1, 0, 0), True, 0.0)],
+)
+def test_scan_primaries_matches_reference(axis, poisson, beam_std):
+    xs, ys = np.linspace(-7.3, 11, 9), np.linspace(2, 5.5, 4)
+    arguments = {
+        "energy": 812.5,
+        "z": 33.3,
+        "axis": axis,
+        "avg_electrons": 6.4,
+        "poisson": poisson,
+        "beam_std": beam_std,
+    }
+    electrons, counts = scan_primaries(
+        xs, ys, rng=np.random.default_rng(5), **arguments
+    )
+    expected, expected_counts = reference_scan_primaries(
+        xs, ys, rng=np.random.default_rng(5), **arguments
+    )
+    np.testing.assert_array_equal(counts, expected_counts)
+    assert electrons.dtype == expected.dtype
+    assert electrons.tobytes() == expected.tobytes()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"axis": (0, 0, 0)},
+        {"axis": (0, np.nan, -1)},
+        {"energy": 0},
+        {"energy": -5},
+        {"z": np.inf},
+        {"beam_std": np.nan},
+        {"xs": [0, np.nan]},
+        {"ys": [np.inf]},
+    ],
+)
+def test_scan_primaries_invalid(change):
+    arguments = {
+        "xs": [0.0, 1.0],
+        "ys": [0.0],
+        "energy": 500,
+        "z": 10,
+        "avg_electrons": 2,
+    }
+    with pytest.raises(ValueError):
+        scan_primaries(**(arguments | change), rng=np.random.default_rng(0))

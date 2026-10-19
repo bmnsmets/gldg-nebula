@@ -2,17 +2,26 @@
 
 import math
 import os
+import threading
 import tomllib
+from collections import deque
 from collections.abc import Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from typing import Self
 
 import numpy as np
 import numpy.typing as npt
 
 from .config import FILTERS, RESERVED_NAMES, Detector
 
-__all__ = ["detector_mask", "electron_quantities", "plot_results", "yield_images"]
+__all__ = [
+    "DetectorCounter",
+    "detector_mask",
+    "electron_quantities",
+    "plot_results",
+    "yield_images",
+]
 
 
 def electron_quantities(
@@ -101,6 +110,132 @@ def _count_selected(
     return counts
 
 
+class DetectorCounter:
+    """Counts the electrons each detector selects per pixel, batch by batch.
+
+    Batches of any size are gathered into chunks of 64K electrons (2.4 MB),
+    which stay in the CPU's cache while their fields are read, and counted on
+    several threads (NumPy releases the GIL); more than 8 threads do not help,
+    as memory bandwidth limits. Counts are integers, so the result does not
+    depend on how the electrons were batched.
+
+    Use it as a context manager, or call `close` when done.
+
+    Args:
+        detectors: The detectors.
+        xs, ys: Pixel centres in nm.
+        chunk_size: Electrons per chunk.
+        workers: Number of threads; by default up to 8.
+    """
+
+    def __init__(
+        self,
+        detectors: Sequence[Detector],
+        xs: npt.ArrayLike,
+        ys: npt.ArrayLike,
+        *,
+        chunk_size: int = 2**16,
+        workers: int | None = None,
+    ) -> None:
+        self.detectors = list(detectors)
+        self.xs = np.asarray(xs, dtype=np.float64)
+        self.ys = np.asarray(ys, dtype=np.float64)
+        self.shape = (len(self.xs), len(self.ys))
+        if workers is None:
+            workers = max(1, min(8, os.cpu_count() or 1))
+        self._chunk_size = chunk_size
+        self._pool = ThreadPoolExecutor(max_workers=workers)
+        # Chunks waiting for a thread; limited, so that a slow consumer
+        # holds back the producer instead of queueing all its electrons
+        self._queued: deque[Future] = deque()
+        self._max_queued = 4 * workers
+        self._pending: list[np.ndarray] = []  # electrons not yet in a chunk
+        self._pending_size = 0
+        # Each thread adds to its own counts, which are summed at the end
+        self._local = threading.local()
+        self._totals: list[np.ndarray] = []
+        self._lock = threading.Lock()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Stop the threads, discarding chunks not yet counted."""
+        self._pool.shutdown(wait=True, cancel_futures=True)
+
+    def add(self, electrons: np.ndarray) -> None:
+        """Count a batch of detected electrons (`ELECTRON_DTYPE`, with pixels)."""
+        if len(electrons) == 0:
+            return
+        self._pending.append(electrons)
+        self._pending_size += len(electrons)
+        if self._pending_size < self._chunk_size:
+            return
+        if len(self._pending) == 1:
+            batch = self._pending[0]
+        else:
+            batch = np.concatenate(self._pending)
+        full = len(batch) - len(batch) % self._chunk_size
+        for start in range(0, full, self._chunk_size):
+            self._submit(batch[start : start + self._chunk_size])
+        self._pending = [batch[full:]] if full < len(batch) else []
+        self._pending_size = len(batch) - full
+
+    def counts(self) -> np.ndarray:
+        """Wait for all chunks; selected electrons per detector and pixel.
+
+        Returns:
+            int64 array of shape (detectors, pixels), pixels in [ix, iy] order.
+        """
+        for electrons in self._pending:
+            self._submit(electrons)
+        self._pending, self._pending_size = [], 0
+        while self._queued:
+            self._queued.popleft().result()
+        total = np.zeros((len(self.detectors), self.shape[0] * self.shape[1]), np.int64)
+        for counts in self._totals:
+            total += counts
+        return total
+
+    def images(self, primaries: np.ndarray) -> dict[str, np.ndarray]:
+        """Yield of each detector per pixel: selected electrons per primary.
+
+        Args:
+            primaries: Number of primary electrons per pixel, shape (len(xs), len(ys)).
+
+        Returns:
+            For each detector, a float32 image ``[ix, iy]``; NaN where a pixel
+            had no primary electrons.
+        """
+        images = {}
+        with np.errstate(invalid="ignore", divide="ignore"):
+            for detector, counts in zip(self.detectors, self.counts(), strict=True):
+                images[detector.name] = np.where(
+                    primaries > 0, counts.reshape(self.shape) / primaries, np.nan
+                ).astype(np.float32)
+        return images
+
+    def _submit(self, chunk: np.ndarray) -> None:
+        # Raises the errors of counted chunks, and waits if too many are queued
+        while self._queued and (
+            self._queued[0].done() or len(self._queued) >= self._max_queued
+        ):
+            self._queued.popleft().result()
+        self._queued.append(self._pool.submit(self._count, chunk))
+
+    def _count(self, chunk: np.ndarray) -> None:
+        counts = _count_selected(chunk, self.detectors, self.xs, self.ys, self.shape)
+        total = getattr(self._local, "total", None)
+        if total is None:
+            total = self._local.total = np.zeros_like(counts)
+            with self._lock:
+                self._totals.append(total)
+        total += counts
+
+
 def yield_images(
     electrons: np.ndarray,
     detectors: tuple[Detector, ...] | list[Detector],
@@ -112,11 +247,8 @@ def yield_images(
 ) -> dict[str, np.ndarray]:
     """Yield of each detector per pixel: selected electrons per primary.
 
-    The electrons are processed in chunks on several threads (NumPy releases
-    the GIL), which is faster and needs less memory than all at once; the
-    result is the same. Chunks of 64K electrons (2.4 MB) stay in the CPU's
-    cache while their fields are read; more than 8 threads do not help, as
-    memory bandwidth limits.
+    The electrons are counted in chunks on several threads, see
+    `DetectorCounter`, which also counts electrons that come in batches.
 
     Args:
         electrons: Detected electrons, with ``px``, ``py`` their pixel.
@@ -128,28 +260,9 @@ def yield_images(
         For each detector, a float32 image ``[ix, iy]``; NaN where a pixel had
         no primary electrons.
     """
-    xs, ys = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
-    shape = (len(xs), len(ys))
-    detectors = list(detectors)
-    chunks = [
-        electrons[start : start + _chunk_size]
-        for start in range(0, len(electrons), _chunk_size)
-    ]
-    counts = np.zeros((len(detectors), shape[0] * shape[1]), dtype=np.int64)
-    workers = max(1, min(8, os.cpu_count() or 1, len(chunks)))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for chunk_counts in pool.map(
-            lambda chunk: _count_selected(chunk, detectors, xs, ys, shape), chunks
-        ):
-            counts += chunk_counts
-
-    images = {}
-    with np.errstate(invalid="ignore", divide="ignore"):
-        for detector, detector_counts in zip(detectors, counts, strict=True):
-            images[detector.name] = np.where(
-                primaries > 0, detector_counts.reshape(shape) / primaries, np.nan
-            ).astype(np.float32)
-    return images
+    with DetectorCounter(detectors, xs, ys, chunk_size=_chunk_size) as counter:
+        counter.add(electrons)
+        return counter.images(primaries)
 
 
 _UNITS = {

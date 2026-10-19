@@ -3,7 +3,7 @@
 import numpy as np
 import numpy.typing as npt
 
-from .io.electrons import make_electrons
+from .io.electrons import ELECTRON_DTYPE, make_electrons
 
 __all__ = ["scan_positions", "scan_primaries"]
 
@@ -66,14 +66,22 @@ def scan_primaries(
         counts = rng.poisson(avg_electrons, size=shape)
     else:
         counts = np.full(shape, round(avg_electrons))
-    pixel = np.repeat(np.arange(counts.size), counts.ravel())
-    ix, iy = np.unravel_index(pixel, shape)
-    position = np.column_stack(
-        [
-            xs[ix] + rng.normal(0, beam_std, len(pixel)),
-            ys[iy] + rng.normal(0, beam_std, len(pixel)),
-            np.full(len(pixel), z),
-        ]
-    )
-    electrons = make_electrons(position, axis, energy, np.column_stack([ix, iy]))
+    # The values shared by all electrons are checked once, as make_electrons
+    # would check them for each electron
+    make_electrons([0, 0, z], axis, energy, [0, 0])
+    if not (np.all(np.isfinite(xs)) and np.all(np.isfinite(ys)) and np.isfinite(beam_std)):
+        raise ValueError("position and direction must be finite")
+
+    ix = np.repeat(np.arange(shape[0]), counts.sum(axis=1))
+    iy = np.repeat(np.tile(np.arange(shape[1]), shape[0]), counts.ravel())
+    n = len(ix)
+    electrons = np.empty(n, dtype=ELECTRON_DTYPE)
+    electrons["x"] = xs[ix] + rng.normal(0, beam_std, n)
+    electrons["y"] = ys[iy] + rng.normal(0, beam_std, n)
+    electrons["z"] = z
+    for name, value in zip(["dx", "dy", "dz"], np.asarray(axis, dtype=np.float64), strict=True):
+        electrons[name] = value
+    electrons["E"] = energy
+    electrons["px"] = ix
+    electrons["py"] = iy
     return electrons, counts

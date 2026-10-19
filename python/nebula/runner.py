@@ -1,19 +1,27 @@
 """Running the Nebula binaries: finding them and their material files."""
 
+import contextlib
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
 
-from .io.electrons import read_electrons, write_electrons
+from .io.electrons import ELECTRON_DTYPE, read_electrons, write_electrons
 from .io.triangles import write_tri
 
-__all__ = ["find_binary", "find_material", "gpu_available", "run_nebula"]
+__all__ = [
+    "find_binary",
+    "find_material",
+    "gpu_available",
+    "run_nebula",
+    "stream_nebula",
+]
 
 # The repository this package is part of, for its build folder
 _REPOSITORY = Path(__file__).resolve().parents[2]
@@ -133,16 +141,9 @@ def run_nebula(
     """
     with tempfile.TemporaryDirectory(prefix="nebula-") as temporary:
         directory = Path(workdir if workdir is not None else temporary)
-        directory.mkdir(parents=True, exist_ok=True)
-        write_tri(directory / "geometry.tri", triangles)
-        write_electrons(directory / "primaries.pri", primaries)
-        command = [
-            os.fspath(binary),
-            f"--seed={seed}",
-            os.fspath(directory / "geometry.tri"),
-            os.fspath(directory / "primaries.pri"),
-            *(os.fspath(material) for material in materials),
-        ]
+        command = _write_inputs(
+            directory, triangles, primaries, materials, seed, binary
+        )
         with (
             open(directory / "output.det", "wb") as output,
             open(directory / "nebula.log", "wb") as log,
@@ -151,12 +152,160 @@ def run_nebula(
             assert process.stderr is not None
             _follow_log(process.stderr, log, progress)
             returncode = process.wait()
-        if returncode != 0:
-            log_text = (directory / "nebula.log").read_text(errors="replace")
-            raise RuntimeError(
-                f"{Path(binary).name} failed with exit code {returncode}:\n{log_text}"
-            )
+        _check_exit(binary, returncode, directory)
         return read_electrons(directory / "output.det")
+
+
+def stream_nebula(
+    triangles: np.ndarray,
+    primaries: np.ndarray,
+    materials: Sequence[str | os.PathLike],
+    on_detected: Callable[[np.ndarray], None],
+    *,
+    seed: int,
+    binary: str | os.PathLike,
+    workdir: str | os.PathLike | None = None,
+    progress: Callable[[float | None], None] | None = None,
+) -> int:
+    """Run Nebula, passing the detected electrons on in batches as they come.
+
+    Like `run_nebula`, but the detected electrons are not stored: they are
+    read from Nebula's output while it runs, and ``on_detected`` is called
+    with each batch (in order, from another thread). Only with ``workdir``
+    are they also written to output.det there.
+
+    Args:
+        triangles, primaries, materials, seed, binary, workdir, progress:
+            See `run_nebula`.
+        on_detected: Called with each batch of detected electrons, an array
+            with dtype `ELECTRON_DTYPE` that it may keep but not change.
+
+    Returns:
+        The number of detected electrons.
+
+    Raises:
+        RuntimeError: If Nebula fails; the message includes its log.
+        Exception: What ``on_detected`` raised, once Nebula has finished.
+    """
+    with tempfile.TemporaryDirectory(prefix="nebula-") as temporary:
+        directory = Path(workdir if workdir is not None else temporary)
+        command = _write_inputs(
+            directory, triangles, primaries, materials, seed, binary
+        )
+        with (
+            open(directory / "nebula.log", "wb") as log,
+            open(directory / "output.det", "wb")
+            if workdir is not None
+            else contextlib.nullcontext() as copy,
+            subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            ) as process,
+        ):
+            assert process.stdout is not None and process.stderr is not None
+            reader = _DetectedReader(process.stdout, on_detected, copy)
+            reader.start()
+            try:
+                _follow_log(process.stderr, log, progress)
+            except BaseException:
+                process.kill()
+                raise
+            finally:
+                returncode = process.wait()
+                reader.join()
+        _check_exit(binary, returncode, directory)
+        if reader.error is not None:
+            raise reader.error
+        if reader.partial:
+            raise RuntimeError(
+                f"{Path(binary).name} output ends in a partial record of "
+                f"{reader.partial} bytes"
+            )
+        return reader.count
+
+
+def _write_inputs(
+    directory: Path,
+    triangles: np.ndarray,
+    primaries: np.ndarray,
+    materials: Sequence[str | os.PathLike],
+    seed: int,
+    binary: str | os.PathLike,
+) -> list[str]:
+    """Write the geometry and primaries to directory; the command to run Nebula."""
+    directory.mkdir(parents=True, exist_ok=True)
+    write_tri(directory / "geometry.tri", triangles)
+    write_electrons(directory / "primaries.pri", primaries)
+    return [
+        os.fspath(binary),
+        f"--seed={seed}",
+        os.fspath(directory / "geometry.tri"),
+        os.fspath(directory / "primaries.pri"),
+        *(os.fspath(material) for material in materials),
+    ]
+
+
+def _check_exit(binary: str | os.PathLike, returncode: int, directory: Path) -> None:
+    if returncode != 0:
+        log_text = (directory / "nebula.log").read_text(errors="replace")
+        raise RuntimeError(
+            f"{Path(binary).name} failed with exit code {returncode}:\n{log_text}"
+        )
+
+
+# Bytes read from Nebula's output at a time, and the pipe size asked for
+_READ_SIZE = 2**20
+
+
+class _DetectedReader(threading.Thread):
+    """Reads detected electrons from Nebula's stdout and passes them on.
+
+    It reads until Nebula closes its output, also after ``on_detected`` or
+    the copy failed (the first error is kept in ``error``), so that Nebula
+    never blocks on a full pipe.
+    """
+
+    def __init__(self, stream, on_detected: Callable[[np.ndarray], None], copy) -> None:
+        super().__init__(name="nebula-output", daemon=True)
+        self._stream = stream
+        self._on_detected = on_detected
+        self._copy = copy
+        self.count = 0  # electrons passed on
+        self.partial = 0  # bytes of an incomplete record at the end
+        self.error: Exception | None = None
+
+    def run(self) -> None:
+        fd = self._stream.fileno()
+        try:
+            import fcntl
+
+            fcntl.fcntl(fd, fcntl.F_SETPIPE_SZ, _READ_SIZE)
+        except ImportError, AttributeError, OSError:
+            pass  # not Linux, or the size is above the limit: a smaller pipe
+        size = ELECTRON_DTYPE.itemsize
+        rest = np.empty(0, np.uint8)  # an incomplete record from the last read
+        while True:
+            # A new buffer each time, as on_detected may keep the records
+            buffer = np.empty(len(rest) + _READ_SIZE, np.uint8)
+            buffer[: len(rest)] = rest
+            n = os.readv(fd, [buffer[len(rest) :]])
+            if n == 0:
+                break
+            end = len(rest) + n
+            whole = end - end % size
+            rest = buffer[whole:end].copy()
+            if self._copy is not None:
+                try:
+                    self._copy.write(buffer[end - n : end])
+                except Exception as error:  # noqa: BLE001 - raised once Nebula is done
+                    self._copy = None
+                    self.error = self.error or error
+            if whole and self.error is None:
+                try:
+                    self._on_detected(buffer[:whole].view(ELECTRON_DTYPE))
+                    self.count += whole // size
+                except Exception as error:  # noqa: BLE001 - raised once Nebula is done
+                    self.error = error
+        self.partial = len(rest)
 
 
 _PROGRESS = re.compile(r"Progress (\d+(?:\.\d+)?)%")

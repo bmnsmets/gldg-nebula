@@ -222,3 +222,16 @@ def test_read_deposits_truncated():
 def test_write_deposits_invalid(deposits):
     with pytest.raises(ValueError):
         write_deposits(io.BytesIO(), deposits)
+
+
+@pytest.mark.parametrize("field", ["x", "dz", "E"])
+def test_write_checks_every_chunk(field):
+    # Records that already have the file's dtype are written as they are,
+    # but checked in chunks: a bad value after the first chunk is found too
+    electrons = random_electrons(3 * 2**16 + 5)
+    stream = io.BytesIO()
+    write_electrons(stream, electrons)
+    assert stream.getvalue() == electrons.tobytes()
+    electrons[2**17 + 3][field] = np.inf
+    with pytest.raises(ValueError, match=f"field {field} must be finite"):
+        write_electrons(io.BytesIO(), electrons)

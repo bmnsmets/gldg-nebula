@@ -12,9 +12,9 @@ import numpy as np
 from .beam import scan_positions, scan_primaries
 from .config import Config
 from .geometry import height_map, triangulate_zmap, zmap_from_png
-from .imaging import yield_images
+from .imaging import DetectorCounter
 from .io.triangles import SpecialMaterial
-from .runner import find_binary, find_material, run_nebula
+from .runner import find_binary, find_material, stream_nebula
 
 __all__ = ["Result", "run", "save_results"]
 
@@ -137,26 +137,25 @@ def run(
             f"material{'s' if n_materials != 1 else ''}"
         )
         report(f"running {binary.name} ({binary})")
-    start = time.perf_counter()
-    detected = run_nebula(
-        triangles,
-        primaries,
-        materials,
-        seed=config.seed,
-        binary=binary,
-        workdir=workdir,
-        progress=progress,
-    )
-    seconds = time.perf_counter() - start
-
-    if report is not None:
         report(
-            f"applying {len(config.detectors)} detectors to {_count(len(detected))} electrons"
+            f"applying {len(config.detectors)} detector"
+            f"{'s' if len(config.detectors) != 1 else ''} to the electrons as they come"
         )
-    images = yield_images(detected, config.detectors, xs, ys, counts)
-    result = Result(
-        images, counts, xs, ys, binary, len(triangles), len(detected), seconds
-    )
+    start = time.perf_counter()
+    with DetectorCounter(config.detectors, xs, ys) as counter:
+        detected = stream_nebula(
+            triangles,
+            primaries,
+            materials,
+            counter.add,
+            seed=config.seed,
+            binary=binary,
+            workdir=workdir,
+            progress=progress,
+        )
+        seconds = time.perf_counter() - start
+        images = counter.images(counts)
+    result = Result(images, counts, xs, ys, binary, len(triangles), detected, seconds)
     # The highest surface Nebula simulated, on the same grid as the images
     result.zmap = height_map(triangles, xs, ys).astype(np.float32)
     return result

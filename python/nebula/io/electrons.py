@@ -89,11 +89,17 @@ def _check_size(n_bytes: int, dtype: np.dtype) -> None:
 
 
 def _check_pixels(pixels: np.ndarray, name: str) -> None:
+    if pixels.dtype == np.int32:
+        return
     if not (np.issubdtype(pixels.dtype, np.integer) or np.all(pixels == np.round(pixels))):
         raise ValueError(f"{name} must be integers")
     info = np.iinfo(np.int32)
     if np.any(pixels < info.min) or np.any(pixels > info.max):
         raise ValueError(f"{name} must fit in an int32")
+
+
+# Records per chunk when checking values before writing
+_CHECK_CHUNK = 2**16
 
 
 def _read_records(
@@ -125,12 +131,18 @@ def _write_records(
         raise ValueError(f"{what} must be one-dimensional, got shape {records.shape}")
     _check_pixels(records["px"], "field px")
     _check_pixels(records["py"], "field py")
-    # Values too large for float32 become inf, which the check below reports
-    with np.errstate(over="ignore"):
-        records = recfunctions.require_fields(records.reshape(-1), dtype)
-    for name in dtype.names or ():
-        if dtype[name].kind == "f" and not np.all(np.isfinite(records[name])):
-            raise ValueError(f"field {name} must be finite (in float32)")
+    records = records.reshape(-1)
+    if records.dtype != dtype:
+        # Values too large for float32 become inf, which the check below reports
+        with np.errstate(over="ignore"):
+            records = recfunctions.require_fields(records, dtype)
+    # In chunks that stay in the CPU cache while each field is checked
+    floats = [name for name in dtype.names or () if dtype[name].kind == "f"]
+    for start in range(0, len(records), _CHECK_CHUNK):
+        chunk = records[start : start + _CHECK_CHUNK]
+        for name in floats:
+            if not np.all(np.isfinite(chunk[name])):
+                raise ValueError(f"field {name} must be finite (in float32)")
 
     if isinstance(file, (str, os.PathLike)):
         records.tofile(file)
