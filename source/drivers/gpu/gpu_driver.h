@@ -163,9 +163,9 @@ public:
 	 * \brief Buffer the detected electrons in the current simulation memory to
 	 *        an "output buffer", and free their memory for the main simulation.
 	 *
-	 * Technically, this function copies the entire simulation state into a
-	 * buffer on the GPU (very fast). Other functions then copy this buffer to
-	 * the CPU.
+	 * The detected particles are gathered, in the order of their slots, into a
+	 * buffer on the GPU, together with their number and the number of running
+	 * particles. flush_buffered() then copies only those to the CPU.
 	 *
 	 * \see flush_buffered
 	 */
@@ -231,12 +231,18 @@ private:
 	uint32_t*        buffer_hin_tags      = nullptr;
 
 	// Output buffers. "dout" are on device, "hout" on host.
-	status_t* buffer_dout_status    = nullptr;
+	// The detected particles and their tags, in the order of their slots
 	particle* buffer_dout_particles = nullptr;
 	uint32_t* buffer_dout_tags      = nullptr;
-	status_t* buffer_hout_status    = nullptr;
+	uint32_t* buffer_dout_flags     = nullptr; // 1 for each detected slot
+	uint32_t* buffer_dout_offset    = nullptr; // Exclusive scan of the flags
+	uint32_t* buffer_dout_counts    = nullptr; // Number detected, number running
+	void*     buffer_scan_temp      = nullptr;
+	size_t    buffer_scan_temp_size = 0;
+	status_t* buffer_hout_status    = nullptr; // Used by get_running_and_detected_count()
 	particle* buffer_hout_particles = nullptr;
 	uint32_t* buffer_hout_tags      = nullptr;
+	uint32_t* buffer_hout_counts    = nullptr;
 
 	gpu_driver(gpu_driver const &) = delete;
 	gpu_driver& operator=(gpu_driver const &) = delete;

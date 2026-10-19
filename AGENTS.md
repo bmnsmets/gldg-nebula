@@ -53,6 +53,13 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
   Cheaper arithmetic in the physics (no atan2/sincos for normal vectors, rsqrt,
   one exponential for both free paths) gave no measurable gain; fewer ops in the
   octree loop and -ftz=true -prec-div=false did. --use_fast_math is no faster.
+  Each frame, buffer_detected gathers only the detected electrons on the GPU (flag,
+  exclusive scan, gather; slot order kept) and flush_buffered copies just those; copying
+  all `capacity` slots made the frame loop host-bound. Since then the loop is GPU-bound.
+  `particle` is alignas(16), padded to 32 bytes (128-bit loads): ~1.5 % faster
+  (5–10 % faster elastic/inelastic); before, the larger full copies cancelled it.
+  `__launch_bounds__(128, 12)` (40 registers, full occupancy) spills in init/inelastic
+  and is ~1 % slower.
   GPU timings vary ~1 % with the seed; compare means over several seeds.
 - To profile kernels per source line: `cmake -S . -B build-prof -DCMAKE_CUDA_FLAGS=-lineinfo
   -DCMAKE_CUDA_ARCHITECTURES=120 -DNEBULA_MATERIALS="" -DNEBULA_BUILD_ELSEPA=OFF
