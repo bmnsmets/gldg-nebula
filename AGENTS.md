@@ -46,7 +46,13 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
 - nebula_gpu keeps no random-generator state: each number is Philox4x32-10 of
   (seed; particle slot, iteration, kernel, draw) (common/util/philox.h). A kernel
   that draws must handle each slot in at most one thread and pass its own kernel id.
-  The GPU kernels are limited by memory traffic, so per-particle data is expensive.
+  elastic/inelastic are limited by memory bandwidth (per-particle data is expensive);
+  init (octree traversal) by dependent-load latency and warp divergence. Octree leaves
+  split above 8 triangles (_split_count): 2–4 is slower, and copying triangles into
+  the leaves or into an aligned layout did not help (more cache footprint).
+- To profile kernels per source line: `cmake -S . -B build-prof -DCMAKE_CUDA_FLAGS=-lineinfo
+  -DCMAKE_CUDA_ARCHITECTURES=120 -DNEBULA_MATERIALS="" -DNEBULA_BUILD_ELSEPA=OFF
+  -DNEBULA_PYTHON_ENV=OFF` (same code as build/). ncu needs GPU counter access (sudo here).
 - matplotlib 3-D sorts faces by depth only within one collection; plot_triangles
   relies on that.
 

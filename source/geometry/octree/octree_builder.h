@@ -155,7 +155,7 @@ private:
 	void clear_triangles();
 
 	static constexpr int _max_depth = 21;
-	static constexpr int _split_count = 16;
+	static constexpr int _split_count = 8;
 
 	friend class octree_root;
 	octree_child() = default;
