@@ -14,7 +14,7 @@ mirrors = true           # add mirrors to the sides of the bounding box
 
 # 0-indexed list of materials, see build/materials/
 # zmap based geometries currently only allow a single material
-materials = ["copper"]
+materials = ["pmma"]
 
 [beam]
 energy = 500         # eV

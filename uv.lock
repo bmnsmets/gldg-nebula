@@ -187,11 +187,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cstool", editable = "third_party/cstool" },
-    { name = "h5py" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "safetensors" },
-    { name = "scipy" },
+    { name = "h5py", specifier = ">=3.16" },
+    { name = "matplotlib", specifier = ">=3.11.2" },
+    { name = "numpy", specifier = ">=2.5" },
+    { name = "safetensors", specifier = ">=0.8" },
+    { name = "scipy", specifier = ">=1.18.1" },
     { name = "tqdm", specifier = ">=4.70.1" },
 ]
 
