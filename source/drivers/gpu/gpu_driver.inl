@@ -2,7 +2,16 @@ namespace nbl { namespace drivers {
 
 namespace kernels
 {
-	__global__ void init_random_states(util::random_generator<true>* curand_states, unsigned long long seed, size_t capacity);
+	using random_seed_t = typename util::random_generator<true>::seed_type;
+
+	// Kernel numbers, which make the random numbers of each kernel differ
+	enum kernel_id : uint32_t
+	{
+		INIT_KERNEL,
+		INTERSECT_KERNEL,
+		ELASTIC_KERNEL,
+		INELASTIC_KERNEL
+	};
 
 	__global__ void init_buffer_data(bool* buffer_data, size_t N);
 
@@ -21,27 +30,27 @@ namespace kernels
 	__global__ void init(particle_manager_t particles,
 		material_manager_t materials,
 		geometry_manager_t geometry,
-		util::random_generator<true>* curand_states,
+		random_seed_t seed, uint32_t iteration,
 		real min_energy, real max_energy);
 
 	template<typename particle_manager_t, typename material_manager_t, typename geometry_manager_t, typename intersect_t>
 	__global__ void intersect(particle_manager_t particles,
 		material_manager_t materials,
 		geometry_manager_t geometry,
-		util::random_generator<true>* curand_states,
+		random_seed_t seed, uint32_t iteration,
 		intersect_t isect);
 
 	template<typename particle_manager_t, typename material_manager_t, typename geometry_manager_t>
 	__global__ void inelastic(particle_manager_t particles,
 		material_manager_t materials,
 		geometry_manager_t geometry,
-		util::random_generator<true>* curand_states);
+		random_seed_t seed, uint32_t iteration);
 
 	template<typename particle_manager_t, typename material_manager_t, typename geometry_manager_t>
 	__global__ void elastic(particle_manager_t particles,
 		material_manager_t materials,
 		geometry_manager_t geometry,
-		util::random_generator<true>* curand_states);
+		random_seed_t seed, uint32_t iteration);
 }
 
 template<typename scatter_list_t,
@@ -61,26 +70,9 @@ CPU gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::gpu_driver(
 	_materials(materials),
 	_geometry(geometry),
 	_intersect(intersect),
-	_num_blocks(1 + particle_capacity/_threads_per_block)
+	_num_blocks(1 + particle_capacity/_threads_per_block),
+	_seed(seed)
 {
-	/*
-	 * Init random states
-	 */
-	cuda::cuda_new<util::random_generator<true>>(&curand_states, particle_capacity);
-	kernels::init_random_states<<<_num_blocks, _threads_per_block>>>(
-		curand_states, seed, particle_capacity
-	);
-
-	// Kernels cannot run if the executable has no code for this GPU, or if the
-	// driver is too old for the embedded PTX. Fail here instead of hanging later.
-	cudaError_t err = cudaGetLastError();
-	if (err == cudaSuccess)
-		err = cudaDeviceSynchronize();
-	if (err != cudaSuccess)
-		throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err)
-			+ " Check that this GPU's architecture is in CMAKE_CUDA_ARCHITECTURES"
-			" and that the NVIDIA driver supports the CUDA version used to compile Nebula.");
-
 	/*
 	 * Allocate output buffers
 	 */
@@ -95,6 +87,16 @@ CPU gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::gpu_driver(
 	// Fill device arrays with particle manager's default values.
 	buffer_detected();
 
+	// Kernels cannot run if the executable has no code for this GPU, or if the
+	// driver is too old for the embedded PTX. Fail here instead of hanging later.
+	cudaError_t err = cudaGetLastError();
+	if (err == cudaSuccess)
+		err = cudaDeviceSynchronize();
+	if (err != cudaSuccess)
+		throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err)
+			+ " Check that this GPU's architecture is in CMAKE_CUDA_ARCHITECTURES"
+			" and that the NVIDIA driver supports the CUDA version used to compile Nebula.");
+
 	cudaStreamCreateWithFlags(&buffer_stream, cudaStreamNonBlocking);
 }
 
@@ -105,7 +107,6 @@ template<typename scatter_list_t,
 CPU gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::~gpu_driver()
 {
 	particle_manager_t::destroy(_particles);
-	cudaFree(curand_states);
 
 	cudaFree(buffer_din_data);
 	cudaFree(buffer_din_particles);
@@ -349,6 +350,7 @@ CPU void gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::do_iterati
 	init();
 	_particles.sort();
 	events();
+	++_iteration;
 }
 
 template<typename scatter_list_t,
@@ -358,7 +360,7 @@ template<typename scatter_list_t,
 CPU void gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::init()
 {
 	kernels::init<<<_num_blocks, _threads_per_block>>>(
-		_particles, _materials, _geometry, curand_states,
+		_particles, _materials, _geometry, _seed, _iteration,
 		_min_energy, _max_energy
 	);
 }
@@ -370,26 +372,14 @@ template<typename scatter_list_t,
 CPU void gpu_driver<scatter_list_t, intersect_t, geometry_manager_t>::events()
 {
 	kernels::intersect<<<_num_blocks, _threads_per_block>>>(
-		_particles, _materials, _geometry, curand_states, _intersect
+		_particles, _materials, _geometry, _seed, _iteration, _intersect
 	);
 	kernels::elastic<<<_num_blocks, _threads_per_block>>>(
-		_particles, _materials, _geometry, curand_states
+		_particles, _materials, _geometry, _seed, _iteration
 	);
 	kernels::inelastic<<<_num_blocks, _threads_per_block>>>(
-		_particles, _materials, _geometry, curand_states
+		_particles, _materials, _geometry, _seed, _iteration
 	);
-}
-
-__global__ void kernels::init_random_states(
-	util::random_generator<true>* curand_states,
-	unsigned long long seed,
-	size_t capacity)
-{
-	const auto i = threadIdx.x+blockIdx.x*blockDim.x;
-	if(i >= capacity)
-		return;
-
-	curand_states[i] = util::random_generator<true>(seed, i);
 }
 
 __global__ void kernels::init_buffer_data(bool* buffer_data, size_t N)
@@ -440,7 +430,7 @@ __global__ void kernels::init(
 	particle_manager_t particles,
 	material_manager_t materials,
 	geometry_manager_t geometry,
-	util::random_generator<true>* curand_states,
+	random_seed_t seed, uint32_t iteration,
 	real min_energy, real max_energy)
 {
 	const auto particle_idx = threadIdx.x + blockIdx.x*blockDim.x;
@@ -484,9 +474,8 @@ __global__ void kernels::init(
 
 		// Sample next scattering event
 		// TODO: case of no scattering events!
-		auto rng = curand_states[particle_idx];
+		util::random_generator<true> rng(seed, particle_idx, iteration, INIT_KERNEL);
 		next_scatter = this_material.sample_path(this_particle, rng);
-		curand_states[particle_idx] = rng;
 	}
 
 	// Move particle to next event, unless there is a triangle in the way
@@ -520,7 +509,7 @@ __global__ void kernels::intersect(
 	particle_manager_t particles,
 	material_manager_t materials,
 	geometry_manager_t geometry,
-	util::random_generator<true>* curand_states,
+	random_seed_t seed, uint32_t iteration,
 	intersect_t isect)
 {
 	// Get particle index
@@ -533,9 +522,8 @@ __global__ void kernels::intersect(
 	if (!particles.next_intersect(particle_idx))
 		return;
 
-	auto rng = curand_states[particle_idx];
+	util::random_generator<true> rng(seed, particle_idx, iteration, INTERSECT_KERNEL);
 	isect.execute(materials, particles, particle_idx, rng);
-	curand_states[particle_idx] = rng;
 }
 
 template<typename particle_manager_t, typename material_manager_t, typename geometry_manager_t>
@@ -543,7 +531,7 @@ __global__ void kernels::inelastic(
 	particle_manager_t particles,
 	material_manager_t materials,
 	geometry_manager_t geometry,
-	util::random_generator<true>* curand_states)
+	random_seed_t seed, uint32_t iteration)
 {
 	// Get particle index
 	const auto i = threadIdx.x+blockIdx.x*blockDim.x;
@@ -570,16 +558,15 @@ __global__ void kernels::inelastic(
 	particles.forget_last_triangle(particle_idx);
 
 	// TODO: event types hardcoded here
-	auto rng = curand_states[particle_idx];
+	util::random_generator<true> rng(seed, particle_idx, iteration, INELASTIC_KERNEL);
 	materials[particles.get_material_index(particle_idx)].execute(1, particles, particle_idx, rng);
-	curand_states[particle_idx] = rng;
 }
 
 template<typename particle_manager_t, typename material_manager_t, typename geometry_manager_t>
 __global__ void kernels::elastic(particle_manager_t particles,
 	material_manager_t materials,
 	geometry_manager_t geometry,
-	util::random_generator<true>* curand_states)
+	random_seed_t seed, uint32_t iteration)
 {
 	// Get particle index
 	const auto i = threadIdx.x+blockIdx.x*blockDim.x;
@@ -596,9 +583,8 @@ __global__ void kernels::elastic(particle_manager_t particles,
 	particles.forget_last_triangle(particle_idx);
 
 	// TODO: event types hardcoded here
-	auto rng = curand_states[particle_idx];
+	util::random_generator<true> rng(seed, particle_idx, iteration, ELASTIC_KERNEL);
 	materials[particles.get_material_index(particle_idx)].execute(2, particles, particle_idx, rng);
-	curand_states[particle_idx] = rng;
 }
 
 }} // namespace nbl::drivers

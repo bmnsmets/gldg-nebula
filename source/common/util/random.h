@@ -42,9 +42,14 @@ public:
 	}
 	/**
 	 * \brief GPU constructor.
+	 *
+	 * \param seed      Random seed.
+	 * \param slot      Memory slot of the particle that draws the numbers.
+	 * \param iteration Number of the simulation iteration.
+	 * \param kernel    Number of the kernel within the iteration.
 	 */
-	GPU random_generator(seed_type seed, seed_type sequence)
-		: base_type(seed, sequence)
+	GPU random_generator(seed_type seed, uint32_t slot, uint32_t iteration, uint32_t kernel)
+		: base_type(seed, slot, iteration, kernel)
 	{
 		static_assert(gpu_flag,
 			"Cannot call GPU constructor on a CPU random generator");

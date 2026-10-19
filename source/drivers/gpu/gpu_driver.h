@@ -208,8 +208,10 @@ private:
 	unsigned int _threads_per_block = 128;
 	unsigned int _num_blocks = 0;
 
-	// Random number generators
-	util::random_generator<true>* curand_states = nullptr;
+	// Random numbers are computed from the seed, the iteration number, the
+	// kernel and the particle's memory slot; see util::random_generator<true>.
+	seed_t _seed;
+	uint32_t _iteration = 0;
 
 	// Functions called by do_iteration()
 	inline CPU void init();

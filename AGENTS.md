@@ -15,7 +15,8 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
 
 ## Checks (run before finishing)
 - `uv run pytest tests/python` (no binaries needed); `uv run pytest tests/integration`
-  needs the build (marker `requires_nebula`).
+  needs the build (marker `requires_nebula`; includes build/bin/test_philox, the
+  known-answer test of the GPU random number generator).
 - If ruff and/or ty are available: `uvx ruff check` and `uvx ruff format` on changed files; `uvx ty check python/nebula/`.
 
 ## Layout
@@ -42,6 +43,10 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
 - To benchmark, run a binary directly on kept inputs (`nebula X.toml --keep DIR`) and
   read its "Simulation" timer. nebula_gpu is deterministic for a given seed;
   nebula_cpu_mt is not.
+- nebula_gpu keeps no random-generator state: each number is Philox4x32-10 of
+  (seed; particle slot, iteration, kernel, draw) (common/util/philox.h). A kernel
+  that draws must handle each slot in at most one thread and pass its own kernel id.
+  The GPU kernels are limited by memory traffic, so per-particle data is expensive.
 - matplotlib 3-D sorts faces by depth only within one collection; plot_triangles
   relies on that.
 

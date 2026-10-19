@@ -1,4 +1,5 @@
 #include <random>
+#include "philox.h"
 
 namespace nbl { namespace util {
 
@@ -30,8 +31,14 @@ namespace detail
 	};
 
 #if CUDA_COMPILER_AVAILABLE
-	#include <curand_kernel.h>
-
+	/**
+	 * \brief GPU random numbers without stored state.
+	 *
+	 * The numbers are computed with Philox4x32-10 from the seed (key) and a
+	 * counter made of the particle slot, the iteration, the kernel and the
+	 * number of the draw. Each (slot, iteration, kernel) must be used by at
+	 * most one thread, so that every counter is used once.
+	 */
 	template<>
 	class random_state<true>
 	{
@@ -39,26 +46,46 @@ namespace detail
 		using seed_type = unsigned long long;
 		static constexpr seed_type default_seed = 0;
 
-		__device__ random_state(seed_type seed, seed_type sequence)
-		{
-			curand_init(seed, sequence, 0, &_rand_state);
-		}
+		__device__ random_state(seed_type seed, uint32_t slot, uint32_t iteration, uint32_t kernel)
+			: _key0(static_cast<uint32_t>(seed)),
+			_key1(static_cast<uint32_t>(seed >> 32)),
+			_counter{ 0, slot, iteration, kernel }
+		{}
+
 		PHYSICS real unit()
 		{
-#if CUDA_COMPILING
 #if USE_DOUBLE
-			return curand_uniform_double(&_rand_state);
+			const uint32_t low = next();
+			return uniform_double(low, next());
 #else // USE_DOUBLE
-			return curand_uniform(&_rand_state);
+			return uniform_float(next());
 #endif // USE_DOUBLE
-#else // CUDA_COMPILING
-			// TODO: proper error message.
-			return 0;
-#endif // CUDA_COMPILING
 		}
 
 	private:
-		curandState _rand_state;
+		// Next 32 random bits; a new block of four every fourth call
+		PHYSICS uint32_t next()
+		{
+			if (_used == 4)
+			{
+				_block = philox4x32_10(_counter, _key0, _key1);
+				++_counter.x;
+				_used = 0;
+			}
+			switch (_used++)
+			{
+				case 0: return _block.x;
+				case 1: return _block.y;
+				case 2: return _block.z;
+				default: return _block.w;
+			}
+		}
+
+		uint32_t _key0;
+		uint32_t _key1;
+		philox_block _counter;
+		philox_block _block = { 0, 0, 0, 0 };
+		int _used = 4;
 	};
 
 #endif // CUDA_COMPILER_AVAILABLE

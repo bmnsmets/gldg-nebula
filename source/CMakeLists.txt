@@ -16,3 +16,6 @@ add_executable(nebula_cpu_edep cpu_energydep.cpp
 		$<TARGET_OBJECTS:octree>)
 target_link_libraries(nebula_cpu_mt ${LIBRARIES} Threads::Threads)
 target_link_libraries(nebula_cpu_edep ${LIBRARIES} Threads::Threads)
+
+# Known-answer test for the GPU random number generator, run by tests/integration
+add_executable(test_philox test_philox.cpp)
