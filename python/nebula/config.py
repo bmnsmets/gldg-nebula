@@ -1,7 +1,7 @@
 """Simulation runs defined in TOML files.
 
-A run file describes the geometry (a z-map image), the beam and its scan, and
-the detectors that select detected electrons afterwards::
+A run file describes the geometry (a z-map image or a triangle file), the beam
+and its scan, and the detectors that select detected electrons afterwards::
 
     name = "cell65"
     seed = 1                          # optional; random if left out
@@ -36,6 +36,17 @@ the detectors that select detected electrons afterwards::
     energy = [50, inf]
     azimuth = [0, 90]
 
+Instead of ``[geometry.zmap]``, the geometry can be a ready-made Nebula
+triangle file (see `nebula.io.triangles`)::
+
+    [geometry]
+    file = "tri/geometry_000000.tri"  # relative to the TOML file
+    materials = ["silicon", "pmma"]   # .mat files for material ids 0, 1, ...
+
+It must have a detector plane (material -126) above the beam. Such a file has
+no pixel size, so ``[beam] step`` is required; ``x`` and ``y`` default to the
+extent of the triangles.
+
 ``x`` and ``y`` are the outer edges of the scanned area, which is divided into
 pixels of ``step`` by ``step``; the beam scans their centres. For example,
 ``x = [-100, 100]`` with ``step = 1`` gives 200 pixels, centred at -99.5, ...,
@@ -65,7 +76,15 @@ import secrets
 import tomllib
 from pathlib import Path
 
-__all__ = ["Beam", "Config", "ConfigError", "Detector", "ZmapGeometry", "load_config"]
+__all__ = [
+    "Beam",
+    "Config",
+    "ConfigError",
+    "Detector",
+    "TriGeometry",
+    "ZmapGeometry",
+    "load_config",
+]
 
 FILTERS = ("energy", "dx", "dy", "r", "polar", "azimuth")
 # Names used for other tensors in the output file
@@ -92,6 +111,14 @@ class ZmapGeometry:
     z_terminator: float = -10_000.0
     z_detector: float | None = None
     mirrors: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
+class TriGeometry:
+    """Geometry read from a Nebula triangle file, see `nebula.io.triangles.read_tri`."""
+
+    file: Path
+    materials: tuple[str, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -127,7 +154,7 @@ class Config:
     """A simulation run."""
 
     name: str
-    geometry: ZmapGeometry
+    geometry: ZmapGeometry | TriGeometry
     beam: Beam
     detectors: tuple[Detector, ...]
     seed: int = 0
@@ -195,33 +222,59 @@ def _required(table: dict, key: str, where: str):
     return table.pop(key)
 
 
-def _geometry(table: dict, directory: Path) -> ZmapGeometry:
-    table = _table(table, "[geometry]")
-    if set(table) != {"zmap"}:
-        raise ConfigError(
-            "[geometry] must contain exactly one geometry, [geometry.zmap]"
-        )
-    zmap = _table(table["zmap"], "[geometry.zmap]")
-    where = "[geometry.zmap]"
-
-    file = _required(zmap, "file", where)
+def _file(table: dict, where: str, directory: Path) -> Path:
+    file = _required(table, "file", where)
     if not isinstance(file, str):
         raise ConfigError(f"{where} file must be a string")
     path = (directory / file).resolve()
     if not path.is_file():
         raise ConfigError(f"{where} file {file!r} not found (looked for {path})")
+    return path
 
-    materials = _required(zmap, "materials", where)
-    if not isinstance(materials, list) or not all(
-        isinstance(m, str) for m in materials
+
+def _materials(table: dict, where: str) -> tuple[str, ...]:
+    materials = _required(table, "materials", where)
+    if (
+        not isinstance(materials, list)
+        or not materials
+        or not all(isinstance(m, str) for m in materials)
     ):
         raise ConfigError(f"{where} materials must be a list of material names")
+    return tuple(materials)
+
+
+def _geometry(table: dict, directory: Path) -> ZmapGeometry | TriGeometry:
+    table = _table(table, "[geometry]")
+    if "zmap" in table and set(table) == {"zmap"}:
+        return _zmap_geometry(table["zmap"], directory)
+    if "zmap" not in table and "file" in table:
+        return _tri_geometry(table, directory)
+    raise ConfigError(
+        "[geometry] must contain exactly one geometry: [geometry.zmap], or "
+        "file and materials for a triangle file"
+    )
+
+
+def _tri_geometry(table: dict, directory: Path) -> TriGeometry:
+    where = "[geometry]"
+    path = _file(table, where, directory)
+    materials = _materials(table, where)
+    _no_other_keys(table, where)
+    return TriGeometry(path, materials)
+
+
+def _zmap_geometry(table: dict, directory: Path) -> ZmapGeometry:
+    zmap = _table(table, "[geometry.zmap]")
+    where = "[geometry.zmap]"
+
+    path = _file(zmap, where, directory)
+    materials = _materials(zmap, where)
     if len(materials) != 1:
         raise ConfigError(f"{where} z-map geometries take exactly one material")
 
     values: dict = {
         "file": path,
-        "materials": tuple(materials),
+        "materials": materials,
         "z_max": _finite(_required(zmap, "z_max", where), f"{where} z_max"),
     }
     for key in ["z_min", "z_terminator", "z_detector"]:
@@ -329,6 +382,8 @@ def load_config(path: str | os.PathLike) -> Config:
         raise ConfigError(f"{path.name}: seed must be an integer from 0 to 2^32 - 1")
     geometry = _geometry(_required(data, "geometry", path.name), path.parent)
     beam = _beam(_required(data, "beam", path.name))
+    if isinstance(geometry, TriGeometry) and beam.step is None:
+        raise ConfigError("[beam] needs step for a triangle file geometry")
     detectors = _detectors(_required(data, "detectors", path.name))
     _no_other_keys(data, path.name)
     return Config(

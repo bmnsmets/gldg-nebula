@@ -5,10 +5,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from nebula.config import ConfigError, load_config
+from nebula.config import ConfigError, TriGeometry, ZmapGeometry, load_config
 from PIL import Image
 
-CELL65 = Path(__file__).parents[2] / "examples" / "z-map" / "cell65.toml"
+EXAMPLES = Path(__file__).parents[2] / "examples"
+CELL65 = EXAMPLES / "z-map" / "cell65.toml"
+LINE_SPACE = EXAMPLES / "line-space" / "line-space-00.toml"
 
 MINIMAL = """
 name = "test"
@@ -27,10 +29,21 @@ avg_electrons = 10
 energy = [0, 50]
 """
 
+TRI = MINIMAL.replace(
+    """[geometry.zmap]
+file = "map.png"
+z_max = 20
+materials = ["silicon"]""",
+    """[geometry]
+file = "geometry.tri"
+materials = ["silicon", "pmma"]""",
+).replace("avg_electrons = 10", "avg_electrons = 10\nstep = 2")
+
 
 @pytest.fixture
 def directory(tmp_path):
     Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(tmp_path / "map.png")
+    (tmp_path / "geometry.tri").write_text("")  # only read by nebula.simulate
     return tmp_path
 
 
@@ -51,6 +64,42 @@ def test_cell65():
     assert se.energy == (0, 50)
     assert bse.energy == (50, math.inf)
     assert config.text == CELL65.read_text()
+
+    assert isinstance(config.geometry, ZmapGeometry)
+
+
+def test_line_space():
+    config = load_config(LINE_SPACE)
+    assert isinstance(config.geometry, TriGeometry)
+    assert config.geometry.file == LINE_SPACE.parent / "tri" / "geometry_000000.tri"
+    assert config.geometry.materials == ("silicon", "pmma")
+
+
+def test_tri(directory):
+    config = load_config(write(directory, TRI))
+    assert config.geometry == TriGeometry(
+        directory / "geometry.tri", ("silicon", "pmma")
+    )
+    assert config.beam.step == 2
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        ("step = 2", ""),  # a triangle file has no pixel size
+        ('file = "geometry.tri"', 'file = "missing.tri"'),
+        ('file = "geometry.tri"', ""),
+        ('materials = ["silicon", "pmma"]', "materials = []"),
+        ('materials = ["silicon", "pmma"]', ""),
+        ("[geometry]", "[geometry]\nz_max = 20"),  # unknown key
+        ("[beam]", "[geometry.zmap]\nfile = 'map.png'\n\n[beam]"),  # two geometries
+    ],
+)
+def test_invalid_tri(directory, change):
+    old, new = change
+    assert old in TRI
+    with pytest.raises(ConfigError):
+        load_config(write(directory, TRI.replace(old, new)))
 
 
 def test_random_seed(directory):

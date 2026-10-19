@@ -50,8 +50,8 @@ nebula RUN.toml [-o OUTPUT] [--seed SEED] [--cpu | --gpu] [--keep DIR] [--no-plo
        nebula plot RESULTS.safetensors [-o FIGURE] [options]"""
 
 MAIN_DESCRIPTION = """\
-Run a Nebula simulation defined in a TOML file: make the geometry and primary
-electrons, run nebula_gpu (or nebula_cpu_mt without a GPU), apply the
+Run a Nebula simulation defined in a TOML file: make (or read) the geometry
+and primary electrons, run nebula_gpu (or nebula_cpu_mt without a GPU), apply the
 detectors of the run file, save the yield per detector per pixel (and the
 height of the highest surface at each beam position) as a safetensors file,
 and plot them as NAME-plot.png next to it.
@@ -64,6 +64,8 @@ MAIN_EPILOG = """\
 examples:
   nebula examples/z-map/cell65.toml
       saves examples/z-map/cell65.safetensors and examples/z-map/cell65-plot.png
+  nebula examples/line-space/line-space-00.toml
+      the same with a ready-made triangle file as geometry
   nebula examples/z-map/cell65.toml --cpu --seed 2 -o run2.safetensors
       saves run2.safetensors and run2-plot.png
   nebula plot examples/z-map/cell65.safetensors --detectors se bse

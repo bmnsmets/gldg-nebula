@@ -9,7 +9,9 @@ venv/
 *.det
 *.safetensors
 examples/tutorial-sem/*.png
-examples/z-map/*-plot.png
+examples/*/*-plot.png
 __pycache__/
 *.egg-info/
 .vscode
+.pytest_cache
+.ruff_cache

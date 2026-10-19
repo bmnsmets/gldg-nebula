@@ -1,0 +1,55 @@
+name = "line-space-01"
+# seed = 42
+
+[geometry]
+file = "tri/geometry_000001.tri" # triangle file
+
+# 0-indexed list of materials, see build/materials/
+materials = ["silicon", "pmma"]
+
+[beam]
+energy = 500         # eV
+z = 5                # nm: above the geometry, below the detector
+axis = [0, 0, -1]    # beam axis
+avg_electrons = 1000 # expected number of electrons per pixel
+poisson = true       # randomize number of electrons per pixel
+beam_std = 0.425     # nm: Gaussian standard deviation of the position (xy) of the beam.
+# 0.425 nm corresponds to FW50 = 1nm, 
+# i.e. 50% of the beam power fits in a diameter of 1nm.
+
+x = [-100, 100] # nm: edges of the scanned area
+y = [-100, 100] # nm
+step = 1        # nm
+
+# Post-processing detectors: each filter is a range [min, max) and all must
+# hold. Filters: energy (eV), dx, dy, r (nm, hit position on the detector
+# plane relative to the beam), polar (degrees from +z), azimuth (degrees from
+# +x, counter-clockwise; min > max wraps around 0).
+
+[detectors.se]
+energy = [0, 50] # eV
+
+[detectors.bse]
+energy = [0, inf] # eV
+polar = [20, 55]
+
+# BSE quadrant detectors, by the direction the electrons travel in
+[detectors.bse_q1]
+energy = [0, inf]
+azimuth = [0, 90]
+polar = [20, 55]
+
+[detectors.bse_q2]
+energy = [0, inf]
+azimuth = [90, 180]
+polar = [20, 55]
+
+[detectors.bse_q3]
+energy = [0, inf]
+azimuth = [180, 270]
+polar = [20, 55]
+
+[detectors.bse_q4]
+energy = [0, inf]
+azimuth = [270, 360]
+polar = [20, 55]

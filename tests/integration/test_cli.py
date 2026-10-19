@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 from nebula import runner
 from nebula.cli import main
+from nebula.geometry import triangulate_zmap
+from nebula.io.triangles import write_tri
 from PIL import Image
 from safetensors import safe_open
 from safetensors.numpy import load_file
@@ -122,6 +124,34 @@ def test_default_scan(tmp_path):
     assert tensors["se"].shape == tensors["zmap"].shape == (32, 32)
     np.testing.assert_allclose(tensors["x"], np.arange(32) - 15.5)
     np.testing.assert_allclose(tensors["y"], np.arange(32) - 15.5)
+
+
+def test_tri_geometry(tmp_path, capsys):
+    # The same line, from a triangle file instead of a z-map
+    heights = np.zeros((32, 32))  # [ix, iy]
+    heights[12:20, :] = 20
+    write_tri(
+        tmp_path / "line.tri",
+        triangulate_zmap(heights, terminator_z=-100, detector_z=30),
+    )
+    run = RUN.replace(
+        """[geometry.zmap]
+file = "line.png"
+z_max = 20
+z_terminator = -100
+materials = ["silicon"]""",
+        """[geometry]
+file = "line.tri"
+materials = ["silicon"]""",
+    )
+    (tmp_path / "small.toml").write_text(run)
+    assert main([str(tmp_path / "small.toml"), "--cpu", "--no-plot"]) == 0
+    assert "from line.tri" in capsys.readouterr().err
+    tensors = load_file(tmp_path / "small.safetensors")
+    assert tensors["se"].shape == tensors["zmap"].shape == (6, 2)
+    on_line = np.abs(tensors["x"]) < 4
+    np.testing.assert_allclose(tensors["zmap"][on_line], 20, atol=1e-4)
+    np.testing.assert_allclose(tensors["zmap"][~on_line], 0, atol=1e-4)
 
 
 def test_invalid_run(tmp_path, capsys):

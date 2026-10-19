@@ -131,7 +131,12 @@ A run file has four parts; the comments in the examples explain each value:
   the size of the simulated box, the depth of the terminator plane (electrons
   that reach it are removed; a few times the electron range at the beam energy
   is enough), the height of the detector plane, and the material, by the name
-  of its file in `build/materials`.
+  of its file in `build/materials`. Instead, `[geometry]` can name a
+  ready-made triangle file (`file = "geometry.tri"`) and its materials
+  (`materials = ["silicon", "pmma"]`, for material ids 0, 1, ...), as in
+  [line-space-00.toml](examples/line-space/line-space-00.toml). It must have a
+  detector plane; `[beam] step` is then required, and the scan defaults to the
+  whole geometry.
 - `[beam]`: the energy and starting height of the primary electrons, the
   number of electrons per pixel, the size of the beam spot, and the scanned
   area (`x`, `y`: its outer edges in nm; `step`: the pixel size).
