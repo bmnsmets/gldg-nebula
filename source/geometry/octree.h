@@ -97,7 +97,8 @@ public:
 	inline PHYSICS vec3 AABB_max() const;
 
 private:
-	inline static PHYSICS vec3 AABB_intersect(vec3 pos, vec3 dir, vec3 center, vec3 halfsize);
+	// Distances to the faces of a box ahead, given 1/direction
+	inline static PHYSICS vec3 AABB_intersect(vec3 pos, vec3 inverse_dir, vec3 center, vec3 halfsize);
 
 	inline static PHYSICS int clz(uint64_t x);
 

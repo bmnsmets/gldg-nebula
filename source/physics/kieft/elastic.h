@@ -85,7 +85,7 @@ public:
 		normalise(this_particle.dir);
 
 		// find a random normal vector to the current direction of flight and normalize
-		vec3 normal_dir = normalised(make_normal_vec(this_particle.dir, rng.phi()));
+		vec3 normal_dir = rng.normal_vector(this_particle.dir);
 
 		// determine the scattered direction
 		this_particle.dir = this_particle.dir * cos_theta + normal_dir * sin_theta;

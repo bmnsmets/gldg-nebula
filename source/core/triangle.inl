@@ -6,21 +6,35 @@ CPU triangle::triangle(vec3 r0, vec3 r1, vec3 r2, int material_in, int material_
 // TODO: trayce implementation
 PHYSICS real triangle::intersect_ray(vec3 ray_start, vec3 ray_direction) const
 {
-	const vec3 pvec = cross_product(ray_direction, _e2);
-	const real det = dot_product(_e1, pvec);
+	vec3 pvec;
+	const real det = determinant(ray_direction, pvec);
+	return intersect_ray(ray_start, ray_direction, pvec, det);
+}
+
+PHYSICS real triangle::determinant(vec3 ray_direction, vec3& pvec) const
+{
+	pvec = cross_product(ray_direction, _e2);
+	return dot_product(_e1, pvec);
+}
+
+PHYSICS real triangle::intersect_ray(vec3 ray_start, vec3 ray_direction,
+	vec3 pvec, real det) const
+{
 	if(absr(det) < EPSILON)
 		return -1;
+	const real inv_det = 1 / det;
 
-	const real u = dot_product(ray_start - _r0, pvec) / det;
+	const vec3 tvec = ray_start - _r0;
+	const real u = dot_product(tvec, pvec) * inv_det;
 	if((u < -EPSILON) || (u > 1 + EPSILON))
 		return -1;
 
-	const vec3 qvec = cross_product(ray_start - _r0, _e1);
-	const real v = dot_product(ray_direction, qvec) / det;
+	const vec3 qvec = cross_product(tvec, _e1);
+	const real v = dot_product(ray_direction, qvec) * inv_det;
 	if((v < -EPSILON) || (u+v > 1+EPSILON))
 		return -1;
 
-	const real t = dot_product(_e2, qvec) / det;
+	const real t = dot_product(_e2, qvec) * inv_det;
 	if(t < 0)
 		return -1;
 

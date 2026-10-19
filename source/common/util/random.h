@@ -72,11 +72,33 @@ public:
 	}
 
 	/**
+	 * \brief Cosine and sine of an angle uniformly distributed between 0 and 2&pi;
+	 */
+	PHYSICS void unit_circle(real& cos_phi, real& sin_phi)
+	{
+		sincospir(2*unit(), &sin_phi, &cos_phi);
+	}
+
+	/**
 	 * \brief Unit vector, uniformly distributed on the unit sphere
 	 */
 	PHYSICS vec3 uniform_vector()
 	{
-		return make_unit_vec(2*unit() - 1, phi());
+		const real cos_theta = 2*unit() - 1;
+		real cos_phi, sin_phi;
+		unit_circle(cos_phi, sin_phi);
+		return make_unit_vec(cos_theta, cos_phi, sin_phi);
+	}
+
+	/**
+	 * \brief Unit vector normal to the unit vector \p dir, uniformly
+	 *        distributed in the plane normal to \p dir
+	 */
+	PHYSICS vec3 normal_vector(vec3 dir)
+	{
+		real cos_phi, sin_phi;
+		unit_circle(cos_phi, sin_phi);
+		return make_normal_vec(dir, cos_phi, sin_phi);
 	}
 
 	/**

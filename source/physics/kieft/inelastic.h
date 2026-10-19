@@ -154,7 +154,7 @@ public:
 		normalise(this_particle.dir);
 
 		// determine random normal vector to determine the scattering direction
-		vec3 normal_dir = normalised(make_normal_vec(this_particle.dir, rng.phi()));
+		vec3 normal_dir = rng.normal_vector(this_particle.dir);
 
 		// Determine the inelastic scattering angles.
 		// We have strictly followed the method of Ivanchenko (and thus Kieft and Bosch)

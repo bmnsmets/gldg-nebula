@@ -50,6 +50,10 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
   init (octree traversal) by dependent-load latency and warp divergence. Octree leaves
   split above 8 triangles (_split_count): 2–4 is slower, and copying triangles into
   the leaves or into an aligned layout did not help (more cache footprint).
+  Cheaper arithmetic in the physics (no atan2/sincos for normal vectors, rsqrt,
+  one exponential for both free paths) gave no measurable gain; fewer ops in the
+  octree loop and -ftz=true -prec-div=false did. --use_fast_math is no faster.
+  GPU timings vary ~1 % with the seed; compare means over several seeds.
 - To profile kernels per source line: `cmake -S . -B build-prof -DCMAKE_CUDA_FLAGS=-lineinfo
   -DCMAKE_CUDA_ARCHITECTURES=120 -DNEBULA_MATERIALS="" -DNEBULA_BUILD_ELSEPA=OFF
   -DNEBULA_PYTHON_ENV=OFF` (same code as build/). ncu needs GPU counter access (sudo here).

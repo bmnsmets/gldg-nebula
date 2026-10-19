@@ -26,6 +26,24 @@ public:
 	inline PHYSICS real intersect_ray(vec3 ray_start, vec3 ray_direction) const;
 
 	/**
+	 * \brief First step of intersect_ray(): the determinant of the ray and the
+	 *        triangle's edges.
+	 *
+	 * It equals `-dot(get_normal(), ray_direction)`, so its sign tells from
+	 * which side the ray comes.
+	 *
+	 * \param ray_direction Direction of the ray.
+	 * \param pvec          Output: intermediate vector for intersect_ray().
+	 */
+	inline PHYSICS real determinant(vec3 ray_direction, vec3& pvec) const;
+
+	/**
+	 * \brief Second step of intersect_ray(), given the output of determinant().
+	 */
+	inline PHYSICS real intersect_ray(vec3 ray_start, vec3 ray_direction,
+		vec3 pvec, real det) const;
+
+	/**
 	 * \brief Get `r0` vertex supplied to constructor.
 	 */
 	inline PHYSICS vec3 r0() const;

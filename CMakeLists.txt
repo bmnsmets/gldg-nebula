@@ -107,7 +107,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 string(APPEND CMAKE_CUDA_FLAGS " --expt-relaxed-constexpr")
-string(APPEND CMAKE_CUDA_FLAGS " -prec-sqrt=false")
+string(APPEND CMAKE_CUDA_FLAGS " -prec-sqrt=false -ftz=true -prec-div=false")
 
 add_subdirectory(source)
 

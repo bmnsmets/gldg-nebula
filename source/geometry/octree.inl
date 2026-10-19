@@ -37,6 +37,8 @@ PHYSICS intersect_event octree<gpu_flag>::propagate(vec3 start, vec3 direction, 
 	vec3 current_position = start;
 	// Distance we still need to travel from current_position, in units of direction
 	real distance_to_go = distance;
+	// For the intersections with the cells' faces
+	const vec3 inverse_direction = { 1 / direction.x, 1 / direction.y, 1 / direction.z };
 
 	// Search in octree
 	// A cell in the octree is uniquely identified by a location code.
@@ -96,7 +98,7 @@ PHYSICS intersect_event octree<gpu_flag>::propagate(vec3 start, vec3 direction, 
 		// find intersection times with each orthogonal plane of the leaf's bounding box,
 		// then see which plane is reached first.
 		{
-			const vec3 t = AABB_intersect(current_position, direction, { AABB.x, AABB.y, AABB.z }, AABB.w * _AABB_halfsize);
+			const vec3 t = AABB_intersect(current_position, inverse_direction, { AABB.x, AABB.y, AABB.z }, AABB.w * _AABB_halfsize);
 			if ((t.x < t.y) && (t.x < t.z)) {
 				intersect = t.x;
 				target = -1;
@@ -125,8 +127,11 @@ PHYSICS intersect_event octree<gpu_flag>::propagate(vec3 start, vec3 direction, 
 			// retrieve triangle from global memory
 			const triangle this_triangle = _triangles[triangle_idx];
 
+			// det = -dot(normal, direction): det > 0 if we go against the normal
+			vec3 pvec;
+			const real det = this_triangle.determinant(direction, pvec);
 			int mat_idx_out;
-			if (dot_product(this_triangle.get_normal(), direction) < 0)
+			if (det > 0)
 				mat_idx_out = this_triangle.material_in;
 			else
 				mat_idx_out = this_triangle.material_out;
@@ -139,7 +144,7 @@ PHYSICS intersect_event octree<gpu_flag>::propagate(vec3 start, vec3 direction, 
 
 			// compute the intersection with the triangle; keep it if it
 			// is closer than the current distance to next cell or triangle
-			const real t = this_triangle.intersect_ray(current_position, direction);
+			const real t = this_triangle.intersect_ray(current_position, direction, pvec, det);
 			if ((t > 0) && (t <= intersect + EPSILON)) {
 				intersect = t;
 				target = triangle_idx;
@@ -209,13 +214,13 @@ inline PHYSICS vec3 octree<gpu_flag>::AABB_max() const
 }
 
 template<bool gpu_flag>
-PHYSICS vec3 octree<gpu_flag>::AABB_intersect(vec3 pos, vec3 dir, vec3 center, vec3 halfsize)
+PHYSICS vec3 octree<gpu_flag>::AABB_intersect(vec3 pos, vec3 inverse_dir, vec3 center, vec3 halfsize)
 {
 	return
 	{
-		(center.x + copysignr(halfsize.x + EPSILON, dir.x) - pos.x) / dir.x,
-		(center.y + copysignr(halfsize.y + EPSILON, dir.y) - pos.y) / dir.y,
-		(center.z + copysignr(halfsize.z + EPSILON, dir.z) - pos.z) / dir.z
+		(center.x + copysignr(halfsize.x + EPSILON, inverse_dir.x) - pos.x) * inverse_dir.x,
+		(center.y + copysignr(halfsize.y + EPSILON, inverse_dir.y) - pos.y) * inverse_dir.y,
+		(center.z + copysignr(halfsize.z + EPSILON, inverse_dir.z) - pos.z) * inverse_dir.z
 	};
 }
 

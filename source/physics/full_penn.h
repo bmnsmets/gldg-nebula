@@ -68,13 +68,11 @@ public:
 		// Retrieve current particle from global memory
 		auto this_particle = particle_mgr[particle_idx];
 
+		const real log_energy = logr(this_particle.kin_energy);
+
 		// "omega" is the energy lost by the primary. Represented as hbar*omega, units eV
-		real omega;
-		{
-			const real x = logr(this_particle.kin_energy);
-			const real y = rng.unit();
-			omega = expr(_log_omega_icdf_table.get(x, y));
-		}
+		const real log_omega = _log_omega_icdf_table.get(log_energy, rng.unit());
+		const real omega = expr(log_omega);
 
 		// Binding energy of the secondary electron
 		real binding;
@@ -86,10 +84,7 @@ public:
 			// expected to dominate the result. In addition, the ratio between
 			// different shells stays fairly similar through energy. So this is
 			// a good approximation and gives a significant speed advantage.
-			const real x = logr(this_particle.kin_energy);
-			const real y = logr(omega/this_particle.kin_energy);
-			const real z = rng.unit();
-			binding = _ionisation_table.get_rounddown(x, y, z);
+			binding = _ionisation_table.get_rounddown(log_energy, log_omega - log_energy, rng.unit());
 		}
 
 		// Normalise direction
@@ -105,20 +100,19 @@ public:
 				// "q" is represented as hbar*q / sqrt(2m), m electron mass; units eV^-1/2
 				real q;
 				{
-					const real x = logr(this_particle.kin_energy);
 					const real y = omega / this_particle.kin_energy;
-					const real z = rng.unit();
-					q = _q_icdf_table.get(x, y, z);
+					q = _q_icdf_table.get(log_energy, y, rng.unit());
 				}
 
-				const vec3 prim_normal_dir = normalised(make_normal_vec(this_particle.dir, rng.phi()));
+				const vec3 prim_normal_dir = rng.normal_vector(this_particle.dir);
 				vec3 q_dir, q_normal_dir;
 				{
 					const real costheta_prim_q = clampr((omega + q * q) / (2 * sqrtr(this_particle.kin_energy)*q), -1, 1);
 					const real sintheta_prim_q = sqrtr(1 - costheta_prim_q * costheta_prim_q);
 
-					q_dir = normalised(this_particle.dir*costheta_prim_q + prim_normal_dir * sintheta_prim_q);
-					q_normal_dir = normalised(make_normal_vec(q_dir, rng.phi()));
+					// Unit vector: dir and prim_normal_dir are orthonormal
+					q_dir = this_particle.dir*costheta_prim_q + prim_normal_dir * sintheta_prim_q;
+					q_normal_dir = rng.normal_vector(q_dir);
 				}
 
 
@@ -245,7 +239,7 @@ public:
 		// Inner-shell excitation.
 
 		// determine random normal vector to determine the scattering direction
-		vec3 normal_dir = normalised(make_normal_vec(this_particle.dir, rng.phi()));
+		vec3 normal_dir = rng.normal_vector(this_particle.dir);
 
 		// Determine the inelastic scattering angles.
 		// We have strictly followed the method of Ivanchenko (and thus Kieft and Bosch)

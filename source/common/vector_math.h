@@ -158,46 +158,39 @@ inline PHYSICS void normalise(vec3& a)
 }
 
 /**
- * \brief Find a vector normal to \p dir.
+ * \brief Find a unit vector normal to the unit vector \p dir.
  *
- * This function finds a coordinate system normal to \p dir and returns a vector
- * with angle \p phi in that system. If the input direction is is a unit vector,
- * the returned vector is also a unit vector. Otherwise, the returned vector is
- * not a unit vector, but it is normal to the input direction.
+ * Builds an orthonormal basis (u, v) of the plane normal to \p dir, with the
+ * branch-free method of Duff et al., "Building an orthonormal basis,
+ * revisited", JCGT 6(1), 2017, and returns `u cos(phi) + v sin(phi)`. The
+ * basis is fixed but arbitrary, so phi only has meaning if it is uniformly
+ * random.
  *
- * \param dir Vector to find a normal vector to.
- * \param phi Rotation angle.
+ * \param dir     Unit vector to find a normal vector to.
+ * \param cos_phi Cosine of the rotation angle in the normal plane.
+ * \param sin_phi Sine of the rotation angle.
  */
-inline PHYSICS vec3 make_normal_vec(vec3 dir, real phi)
+inline PHYSICS vec3 make_normal_vec(vec3 dir, real cos_phi, real sin_phi)
 {
-	real sin_azimuth, cos_azimuth;
-	sincosr(atan2r(dir.y, dir.x), &sin_azimuth, &cos_azimuth);
-
-	const vec3 unit_v {
-		dir.z*cos_azimuth,
-		dir.z*sin_azimuth,
-		-sqrtr(dir.x*dir.x + dir.y*dir.y)
-	};
-	const vec3 unit_u = cross_product(unit_v, dir);
-
-	real sin_phi, cos_phi;
-	sincosr(phi, &sin_phi, &cos_phi);
+	const real sign = copysignr(1, dir.z);
+	const real a = -1 / (sign + dir.z);
+	const real b = dir.x * dir.y * a;
+	const vec3 unit_u { 1 + sign*dir.x*dir.x*a, sign*b, -sign*dir.x };
+	const vec3 unit_v { b, sign + dir.y*dir.y*a, -dir.y };
 	return unit_u*cos_phi + unit_v*sin_phi;
 }
 
 /**
- * \brief Create a unit vector, given Euler angles.
+ * \brief Create a unit vector, given its polar angle and azimuth.
  *
  * \param cos_theta Cosine of the angle w.r.t the z axis.
- * \param phi       Angle in the xy plane.
+ * \param cos_phi   Cosine of the angle in the xy plane.
+ * \param sin_phi   Sine of the angle in the xy plane.
  */
-inline PHYSICS vec3 make_unit_vec(real cos_theta, real phi)
+inline PHYSICS vec3 make_unit_vec(real cos_theta, real cos_phi, real sin_phi)
 {
-	real sin_phi, cos_phi;
-	sincosr(phi, &sin_phi, &cos_phi);
-
 	cos_theta = clampr(cos_theta, -1, 1);
-	const real sin_theta = sqrtf(1 - cos_theta*cos_theta);
+	const real sin_theta = sqrtr(1 - cos_theta*cos_theta);
 	return vec3 {
 		sin_theta * cos_phi,
 		sin_theta * sin_phi,

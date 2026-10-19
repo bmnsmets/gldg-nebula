@@ -218,6 +218,22 @@ inline PHYSICS real atan2r(real y, real x)
  * \param sin_ptr Pointer to the value to store the sine in
  * \param cos_ptr Pointer to the value to store the cosine in
  */
+/// Sine and cosine of pi times x
+inline PHYSICS void sincospir(real x, real* sin_ptr, real* cos_ptr)
+{
+#if CUDA_COMPILING
+	#if USE_DOUBLE
+		sincospi(x, sin_ptr, cos_ptr);
+	#else // USE_DOUBLE
+		sincospif(x, sin_ptr, cos_ptr);
+	#endif // USE_DOUBLE
+#else // CUDA_COMPILING
+	const real pi_x = real(3.14159265358979323846) * x;
+	*sin_ptr = std::sin(pi_x);
+	*cos_ptr = std::cos(pi_x);
+#endif // CUDA_COMPILING
+}
+
 inline PHYSICS void sincosr(real x, real* sin_ptr, real* cos_ptr)
 {
 #if CUDA_COMPILING
