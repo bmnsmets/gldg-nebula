@@ -3,7 +3,8 @@
 import math
 import os
 import tomllib
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,10 @@ __all__ = ["detector_mask", "electron_quantities", "plot_results", "yield_images
 
 
 def electron_quantities(
-    electrons: np.ndarray, xs: npt.ArrayLike, ys: npt.ArrayLike
+    electrons: np.ndarray,
+    xs: npt.ArrayLike,
+    ys: npt.ArrayLike,
+    keys: Iterable[str] = FILTERS,
 ) -> dict[str, np.ndarray]:
     """The quantities detectors filter on, for each detected electron.
 
@@ -23,27 +27,40 @@ def electron_quantities(
         electrons: Detected electrons (`ELECTRON_DTYPE`), with ``px`` and
             ``py`` the indices of their pixel in xs and ys.
         xs, ys: Pixel centres (beam positions) in nm.
+        keys: Which quantities to compute; by default all of them.
 
     Returns:
         ``energy`` (eV), ``dx``, ``dy``, ``r`` (nm, relative to the beam
         position of the pixel), ``polar`` and ``azimuth`` (degrees), see
-        `nebula.config`.
+        `nebula.config`; only those in ``keys``. All are float64.
     """
+    keys = set(keys)
     xs, ys = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
-    dx = electrons["x"] - xs[electrons["px"]]
-    dy = electrons["y"] - ys[electrons["py"]]
-    direction = np.column_stack(
-        [electrons["dx"], electrons["dy"], electrons["dz"]]
-    ).astype(np.float64)
-    length = np.linalg.norm(direction, axis=1)
-    return {
-        "energy": electrons["E"].astype(np.float64),
-        "dx": dx,
-        "dy": dy,
-        "r": np.hypot(dx, dy),
-        "polar": np.degrees(np.arccos(np.clip(direction[:, 2] / length, -1, 1))),
-        "azimuth": np.degrees(np.arctan2(direction[:, 1], direction[:, 0])) % 360,
-    }
+    quantities = {}
+    if "energy" in keys:
+        quantities["energy"] = electrons["E"].astype(np.float64)
+    if keys & {"dx", "r"}:
+        dx = electrons["x"] - xs[electrons["px"]]
+    if keys & {"dy", "r"}:
+        dy = electrons["y"] - ys[electrons["py"]]
+    if "dx" in keys:
+        quantities["dx"] = dx
+    if "dy" in keys:
+        quantities["dy"] = dy
+    if "r" in keys:
+        quantities["r"] = np.hypot(dx, dy)
+    if keys & {"polar", "azimuth"}:
+        direction = np.column_stack(
+            [electrons["dx"], electrons["dy"], electrons["dz"]]
+        ).astype(np.float64)
+    if "polar" in keys:
+        length = np.linalg.norm(direction, axis=1)
+        cos_polar = np.clip(direction[:, 2] / length, -1, 1)
+        quantities["polar"] = np.degrees(np.arccos(cos_polar))
+    if "azimuth" in keys:
+        azimuth = np.arctan2(direction[:, 1], direction[:, 0])
+        quantities["azimuth"] = np.degrees(azimuth) % 360
+    return quantities
 
 
 def detector_mask(detector: Detector, quantities: dict[str, np.ndarray]) -> np.ndarray:
@@ -62,14 +79,44 @@ def detector_mask(detector: Detector, quantities: dict[str, np.ndarray]) -> np.n
     return mask
 
 
+def _count_selected(
+    electrons: np.ndarray,
+    detectors: Sequence[Detector],
+    xs: np.ndarray,
+    ys: np.ndarray,
+    shape: tuple[int, int],
+) -> np.ndarray:
+    """Number of electrons each detector selects per pixel, shape (detectors, pixels)."""
+    keys = {key for d in detectors for key in FILTERS if getattr(d, key) is not None}
+    quantities = electron_quantities(electrons, xs, ys, keys)
+    pixel = np.ravel_multi_index((electrons["px"], electrons["py"]), shape)
+    size = shape[0] * shape[1]
+    counts = np.empty((len(detectors), size), dtype=np.int64)
+    for i, detector in enumerate(detectors):
+        if any(getattr(detector, key) is not None for key in FILTERS):
+            selected = pixel[detector_mask(detector, quantities)]
+        else:
+            selected = pixel
+        counts[i] = np.bincount(selected, minlength=size)
+    return counts
+
+
 def yield_images(
     electrons: np.ndarray,
     detectors: tuple[Detector, ...] | list[Detector],
     xs: npt.ArrayLike,
     ys: npt.ArrayLike,
     primaries: np.ndarray,
+    *,
+    _chunk_size: int = 2**16,
 ) -> dict[str, np.ndarray]:
     """Yield of each detector per pixel: selected electrons per primary.
+
+    The electrons are processed in chunks on several threads (NumPy releases
+    the GIL), which is faster and needs less memory than all at once; the
+    result is the same. Chunks of 64K electrons (2.4 MB) stay in the CPU's
+    cache while their fields are read; more than 8 threads do not help, as
+    memory bandwidth limits.
 
     Args:
         electrons: Detected electrons, with ``px``, ``py`` their pixel.
@@ -81,17 +128,26 @@ def yield_images(
         For each detector, a float32 image ``[ix, iy]``; NaN where a pixel had
         no primary electrons.
     """
-    xs, ys = np.asarray(xs), np.asarray(ys)
+    xs, ys = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
     shape = (len(xs), len(ys))
-    quantities = electron_quantities(electrons, xs, ys)
-    pixel = np.ravel_multi_index((electrons["px"], electrons["py"]), shape)
+    detectors = list(detectors)
+    chunks = [
+        electrons[start : start + _chunk_size]
+        for start in range(0, len(electrons), _chunk_size)
+    ]
+    counts = np.zeros((len(detectors), shape[0] * shape[1]), dtype=np.int64)
+    workers = max(1, min(8, os.cpu_count() or 1, len(chunks)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for chunk_counts in pool.map(
+            lambda chunk: _count_selected(chunk, detectors, xs, ys, shape), chunks
+        ):
+            counts += chunk_counts
+
     images = {}
     with np.errstate(invalid="ignore", divide="ignore"):
-        for detector in detectors:
-            selected = pixel[detector_mask(detector, quantities)]
-            counts = np.bincount(selected, minlength=shape[0] * shape[1]).reshape(shape)
+        for detector, detector_counts in zip(detectors, counts, strict=True):
             images[detector.name] = np.where(
-                primaries > 0, counts / primaries, np.nan
+                primaries > 0, detector_counts.reshape(shape) / primaries, np.nan
             ).astype(np.float32)
     return images
 

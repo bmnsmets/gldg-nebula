@@ -74,3 +74,49 @@ def test_yield_images():
     assert images["se"].dtype == np.float32 and images["se"].shape == (2, 3)
     np.testing.assert_allclose(images["se"], [[0.5, 0, 0], [np.nan, 0, 0.5]])
     np.testing.assert_allclose(images["bse"], [[0.25, 0, 0], [np.nan, 0, 0]])
+
+
+def test_quantities_subset():
+    e = electrons(
+        [[13, 9, 60], [0, 25, 60]], [[1, 0, 1], [0, -1, 0.5]], 10, [[1, 1], [0, 2]]
+    )
+    full = electron_quantities(e, XS, YS)
+    polar = electron_quantities(e, XS, YS, keys=("polar",))
+    assert list(polar) == ["polar"]
+    np.testing.assert_array_equal(polar["polar"], full["polar"])
+    r = electron_quantities(e, XS, YS, keys=["r"])
+    assert list(r) == ["r"]
+    np.testing.assert_array_equal(r["r"], full["r"])
+
+
+def test_yield_images_chunked_matches_reference():
+    # Many small chunks on several threads give exactly the all-at-once result
+    rng = np.random.default_rng(1)
+    n = 5000
+    position = np.column_stack(
+        [rng.uniform(-5, 15, n), rng.uniform(-5, 25, n), np.full(n, 60)]
+    )
+    direction = rng.normal(size=(n, 3))
+    pixel = np.column_stack([rng.integers(0, 2, n), rng.integers(0, 3, n)])
+    e = electrons(position, direction, rng.exponential(60, n), pixel)
+    primaries = np.array([[40, 0, 30], [20, 25, 0]])
+    detectors = [
+        Detector("all"),
+        Detector("se", energy=(0, 50)),
+        Detector("bse", energy=(50, math.inf), polar=(10, 55)),
+        Detector("wrap", azimuth=(300, 60.5)),
+        Detector("box", dx=(-2, 3.5), dy=(-np.inf, 4)),
+        Detector("ring", r=(1, 6), polar=(90, 180), azimuth=(0, 180)),
+    ]
+    images = yield_images(e, detectors, XS, YS, primaries, _chunk_size=7)
+
+    q = electron_quantities(e, XS, YS)
+    index = np.ravel_multi_index((e["px"], e["py"]), primaries.shape)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for detector in detectors:
+            counts = np.bincount(index[detector_mask(detector, q)], minlength=6)
+            expected = np.where(
+                primaries > 0, counts.reshape(primaries.shape) / primaries, np.nan
+            ).astype(np.float32)
+            np.testing.assert_array_equal(images[detector.name], expected)
+    np.testing.assert_array_equal(np.isnan(images["all"]), primaries == 0)
