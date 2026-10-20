@@ -10,7 +10,7 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
   (slow: minutes and ~550 MB per material; editing cstool sources regenerates them all).
 - Python: `uv run ...` (Python 3.14, uv project in pyproject.toml).
 - Simulate: `uv run nebula examples/z-map/cell65.toml` (TOML run file, see
-  python/nebula/config.py) → NAME.safetensors + NAME-plot.png;
+  python/nebula/config.py) → NAME.safetensors (+ NAME-plot.png with `--plot`);
   `uv run nebula plot X.safetensors` replots.
 
 ## Checks (run before finishing)

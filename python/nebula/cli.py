@@ -2,13 +2,13 @@
 
 Usage:
 
-- ``nebula RUN.toml [-o OUTPUT] [--seed N] [--cpu | --gpu] [--keep DIR] [-q]``
+- ``nebula RUN.toml [-o OUTPUT] [--seed N] [--cpu | --gpu] [--keep DIR] [--plot] [-q]``
   runs the simulation, printing what it runs and its progress on stderr. See `nebula.config` for the file format; the yields per
   detector per pixel, and the height of the highest surface at each beam
   position, are written to a safetensors file (see
-  `nebula.simulate.save_results`) and plotted as NAME-plot.png next to it,
-  with NAME the name of the results file without extension (``--no-plot``
-  skips the plot).
+  `nebula.simulate.save_results`); with ``--plot`` they are also plotted as
+  NAME-plot.png next to it, with NAME the name of the results file without
+  extension.
 - ``nebula plot RESULTS.safetensors [-o FIGURE] [--detectors NAME ...]
   [--cmap NAME] [--percentile HIGH] [--dpi N]``
   plots such a file (see `nebula.imaging.plot_results`), by default as
@@ -46,7 +46,7 @@ examples:
   nebula plot cell65.safetensors --cmap viridis --percentile 100"""
 
 MAIN_USAGE = """\
-nebula RUN.toml [-o OUTPUT] [--seed SEED] [--cpu | --gpu] [--keep DIR] [--no-plot] [-q]
+nebula RUN.toml [-o OUTPUT] [--seed SEED] [--cpu | --gpu] [--keep DIR] [--plot] [-q]
        nebula plot RESULTS.safetensors [-o FIGURE] [options]"""
 
 MAIN_DESCRIPTION = """\
@@ -54,7 +54,7 @@ Run a Nebula simulation defined in a TOML file: make (or read) the geometry
 and primary electrons, run nebula_gpu (or nebula_cpu_mt without a GPU), apply the
 detectors of the run file, save the yield per detector per pixel (and the
 height of the highest surface at each beam position) as a safetensors file,
-and plot them as NAME-plot.png next to it.
+and, with --plot, plot them as NAME-plot.png next to it.
 
 commands:
   nebula RUN.toml                    run a simulation (options below)
@@ -63,10 +63,10 @@ commands:
 MAIN_EPILOG = """\
 examples:
   nebula examples/z-map/cell65.toml
-      saves examples/z-map/cell65.safetensors and examples/z-map/cell65-plot.png
+      saves examples/z-map/cell65.safetensors
   nebula examples/line-space/line-space-00.toml
       the same with a ready-made triangle file as geometry
-  nebula examples/z-map/cell65.toml --cpu --seed 2 -o run2.safetensors
+  nebula examples/z-map/cell65.toml --cpu --seed 2 -o run2.safetensors --plot
       saves run2.safetensors and run2-plot.png
   nebula plot examples/z-map/cell65.safetensors --detectors se bse
       plots again, with other options
@@ -270,10 +270,9 @@ def main(argv: list[str] | None = None) -> int:
         help="keep Nebula's input files, raw output and log in DIR",
     )
     parser.add_argument(
-        "--no-plot",
+        "--plot",
         action="store_true",
-        help="do not plot the results (default: plot them as NAME-plot.png next "
-        "to the results file)",
+        help="also plot the results as NAME-plot.png next to the results file",
     )
     parser.add_argument(
         "-q",
@@ -312,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {name}: mean yield {np.nanmean(image):.4f}")
     print(f"saved {output}")
 
-    if not args.no_plot:
+    if args.plot:
         # The results are saved, so a failing plot only gets a warning
         try:
             print(f"saved {_save_plot(output)}")

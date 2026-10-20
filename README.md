@@ -94,7 +94,7 @@ After [building](#building) (the material files used must be in
 `build/materials`), run an example with:
 
 ```
-uv run nebula examples/z-map/cell65.toml
+uv run nebula examples/z-map/cell65.toml --plot
 ```
 
 This turns the PNG into a triangle mesh, makes the primary electrons for the
@@ -104,8 +104,8 @@ forces it), applies the detectors of the run file, and saves next to it:
 - `cell65.safetensors`: the yield (detected electrons per primary electron)
   per pixel of each detector, the height of the surface at each beam position
   (`zmap`), the number of primary electrons per pixel, and the run file itself;
-- `cell65-plot.png`: a plot of the surface height and of each detector's
-  yield map.
+- `cell65-plot.png` (only with `--plot`): a plot of the surface height and of
+  each detector's yield map.
 
 To make the plot again, for example of only some detectors:
 

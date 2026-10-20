@@ -64,7 +64,7 @@ def test_small_run(tmp_path, capsys):
     Image.fromarray(pixels).save(tmp_path / "line.png")
     (tmp_path / "small.toml").write_text(RUN)
 
-    assert main([str(tmp_path / "small.toml"), "--cpu"]) == 0
+    assert main([str(tmp_path / "small.toml"), "--cpu", "--plot"]) == 0
     captured = capsys.readouterr()
     out = captured.out
     assert "nebula_cpu_mt" in out
@@ -116,9 +116,11 @@ def test_default_scan(tmp_path):
     (tmp_path / "small.toml").write_text(run)
     output = tmp_path / "out" / "default.safetensors"
     output.parent.mkdir()
-    assert main([str(tmp_path / "small.toml"), "--cpu", "-o", str(output)]) == 0
+    assert (
+        main([str(tmp_path / "small.toml"), "--cpu", "-o", str(output), "--plot"]) == 0
+    )
     assert (tmp_path / "out" / "default-plot.png").is_file()
-    assert main([str(tmp_path / "small.toml"), "--cpu", "--no-plot"]) == 0
+    assert main([str(tmp_path / "small.toml"), "--cpu"]) == 0
     assert not (tmp_path / "small-plot.png").exists()
     tensors = load_file(output)
     assert tensors["se"].shape == tensors["zmap"].shape == (32, 32)
@@ -145,7 +147,7 @@ file = "line.tri"
 materials = ["silicon"]""",
     )
     (tmp_path / "small.toml").write_text(run)
-    assert main([str(tmp_path / "small.toml"), "--cpu", "--no-plot"]) == 0
+    assert main([str(tmp_path / "small.toml"), "--cpu"]) == 0
     assert "from line.tri" in capsys.readouterr().err
     tensors = load_file(tmp_path / "small.safetensors")
     assert tensors["se"].shape == tensors["zmap"].shape == (6, 2)
