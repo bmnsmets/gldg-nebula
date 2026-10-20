@@ -4,7 +4,7 @@ name = "line-space-00"
 [geometry]
 file = "tri/geometry_000000.tri" # triangle file
 
-# 0-indexed list of materials, see build/materials/
+# 0-indexed list of materials, see materials/
 materials = ["silicon", "pmma"]
 
 [beam]

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from nebula.io import Axis, Material, Quantity, Table, read_mat, write_mat
 
-SILICON_MAT = Path(__file__).parents[2] / "build" / "materials" / "silicon.mat"
+SILICON_MAT = Path(__file__).parents[2] / "materials" / "silicon.mat"
 
 NEBULA_TABLES = {
     "full_penn/imfp",

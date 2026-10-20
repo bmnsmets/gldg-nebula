@@ -26,6 +26,7 @@ Additionally this fork contains a user-friendly cli font-end for calling the Neb
 ## Building
 
 ```
+uv sync
 cmake -S . -B build
 cmake --build build -j
 ```
@@ -36,7 +37,8 @@ This builds:
 - the Python environment, with cstool, in `.venv` (see [below](#python-environment))
 - a material file for each parameter file in
   [third_party/cstool/data/materials](third_party/cstool/data/materials), in
-  `build/materials`. This is the slowest step: a few minutes and about 550 MB
+  `materials/` at the top of the repository (not in git, and kept when you
+  delete `build`). This is the slowest step: a few minutes and about 550 MB
   per material.
 
 Options for the first `cmake` command (they are remembered for later builds):
@@ -79,7 +81,7 @@ runs `uv sync` to set up `.venv`, with cstool installed in editable mode. Use it
 `uv add <package>`.
 
 
-## Running the z-map examples
+## Running the examples
 
 [examples/z-map](examples/z-map) contains simulations of SEM images of
 surfaces described by a height map (z-map): a greyscale PNG in which black is
@@ -88,11 +90,11 @@ to its PNG:
 
 | Run file | Geometry | Material |
 |---|---|---|
-| [cell65.toml](examples/z-map/cell65.toml) | [cell65-zmap.png](examples/z-map/cell65-zmap.png) | copper |
-| [fins.toml](examples/z-map/fins.toml) | [fins-zmap.png](examples/z-map/fins-zmap.png) | silicon |
+| [cell65.toml](examples/z-map/cell65.toml) | [cell65-zmap.png](examples/z-map/cell65-zmap.png) | pmma |
+| [fins.toml](examples/z-map/fins.toml) | [fins-zmap.png](examples/z-map/fins-zmap.png) | pmma |
 
 After [building](#building) (the material files used must be in
-`build/materials`), run an example with:
+`materials/`), run an example with:
 
 ```
 uv run nebula examples/z-map/cell65.toml --plot
@@ -144,7 +146,7 @@ The geometry comes from one of two sources:
   have its own detector plane. `[beam] step` is required, and by default the
   scan covers the whole geometry.
 
-In both, materials are named after their files in `build/materials`.
+In both, materials are named after their files in `materials/`.
 
 The other parts are:
 

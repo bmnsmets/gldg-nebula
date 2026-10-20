@@ -12,7 +12,7 @@ z_terminator = -1000     # nm
 z_detector = 60          # nm
 mirrors = true           # add mirrors to the sides of the bounding box
 
-# 0-indexed list of materials, see build/materials/
+# 0-indexed list of materials, see materials/
 # zmap based geometries currently only allow a single material
 materials = ["pmma"]
 

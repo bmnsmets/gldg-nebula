@@ -6,7 +6,7 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
 
 ## Build and run
 - `cmake -S . -B build && cmake --build build -j` builds build/bin/{nebula_gpu,
-  nebula_cpu_mt,nebula_cpu_edep}, the uv venv (.venv) and build/materials/*.mat
+  nebula_cpu_mt,nebula_cpu_edep}, the uv venv (.venv) and materials/*.mat (git ignored)
   (slow: minutes and ~550 MB per material; editing cstool sources regenerates them all).
 - Python: `uv run ...` (Python 3.14, uv project in pyproject.toml).
 - Simulate: `uv run nebula examples/z-map/cell65.toml` (TOML run file, see
@@ -15,8 +15,7 @@ Python tools are in python/nebula (import name `nebula`, distribution `gldg-nebu
 
 ## Checks (run before finishing)
 - `uv run pytest tests/python` (no binaries needed); `uv run pytest tests/integration`
-  needs the build (marker `requires_nebula`; includes build/bin/test_philox, the
-  known-answer test of the GPU random number generator).
+  needs the build (marker `requires_nebula`).
 - If ruff and/or ty are available: `uvx ruff check` and `uvx ruff format` on changed files; `uvx ty check python/nebula/`.
 
 ## Layout

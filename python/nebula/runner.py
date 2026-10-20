@@ -23,7 +23,7 @@ __all__ = [
     "stream_nebula",
 ]
 
-# The repository root, whose build/ folder holds the binaries and materials
+# The repository root: build/bin holds the binaries, materials/ the material files
 _REPOSITORY = Path(__file__).resolve().parents[2]
 
 
@@ -87,7 +87,7 @@ def find_material(name: str, directories: Sequence[str | os.PathLike] = ()) -> P
     """Find the material file <name>.mat.
 
     Looks in $NEBULA_MATERIALS_DIR, the given directories, and the
-    build/materials folder of this repository.
+    materials folder of this repository.
 
     Raises:
         FileNotFoundError: If the file is not found.
@@ -96,7 +96,7 @@ def find_material(name: str, directories: Sequence[str | os.PathLike] = ()) -> P
     if "NEBULA_MATERIALS_DIR" in os.environ:
         searched.append(Path(os.environ["NEBULA_MATERIALS_DIR"]))
     searched += [Path(d) for d in directories]
-    searched.append(_REPOSITORY / "build" / "materials")
+    searched.append(_REPOSITORY / "materials")
     for directory in searched:
         if (directory / f"{name}.mat").is_file():
             return directory / f"{name}.mat"

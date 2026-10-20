@@ -5,6 +5,7 @@ build-*/
 venv/
 .venv/
 *.mat
+/materials/
 *.pri
 *.det
 *.safetensors
