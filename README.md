@@ -1,14 +1,15 @@
 # Nebula (GLDG fork)
 
-This is the Nebula Monte Carlo simulator for electron-matter interaction. 
+This is a fork of the Nebula Monte Carlo simulator for electron-matter interaction. 
 Full instructions on how to use this software are in the
 [documentation](https://nebula-simulator.github.io).
 
 This fork is self-contained: besides the simulator, it includes
 [cstool](third_party/cstool), which generates the material files Nebula needs,
-and builds ELSEPA, which cstool depends on. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the origin and licences of
-the bundled components.
+and builds ELSEPA, which cstool depends on. 
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the origin and licences of the bundled components.
+
+Additionally this fork contains a user-friendly cli font-end for calling the Nebula executables as well as performance enhancements to the CUDA code.
 
 ## Requirements
 
@@ -125,18 +126,28 @@ se = results["se"]  # yield per pixel, indexed [ix, iy], x to the right and y up
 
 ### Run files
 
-A run file has four parts; the comments in the examples explain each value:
+A run file (.toml) has a `name` (and optionally a `seed`), a geometry, a beam
+and detectors; the comments in the examples explain each value.
 
-- `[geometry.zmap]`: the PNG, its pixel size, the heights of black and white,
-  the size of the simulated box, the depth of the terminator plane (electrons
-  that reach it are removed; a few times the electron range at the beam energy
-  is enough), the height of the detector plane, and the material, by the name
-  of its file in `build/materials`. Instead, `[geometry]` can name a
-  ready-made triangle file (`file = "geometry.tri"`) and its materials
-  (`materials = ["silicon", "pmma"]`, for material ids 0, 1, ...), as in
-  [line-space-00.toml](examples/line-space/line-space-00.toml). It must have a
-  detector plane; `[beam] step` is then required, and the scan defaults to the
-  whole geometry.
+The geometry comes from one of two sources:
+
+- **A z-map**, `[geometry.zmap]`, as in [cell65.toml](examples/z-map/cell65.toml):
+  a greyscale PNG that is turned into triangles. You give its pixel size, the
+  heights of black and white, the size of the simulated box, the depth of the
+  terminator plane (electrons that reach it are removed; a few times the
+  electron range at the beam energy is enough), the height of the detector
+  plane, and one material. By default the scan covers the z-map's pixels.
+- **A triangle file**, `[geometry]`, as in
+  [line-space-00.toml](examples/line-space/line-space-00.toml): a ready-made
+  Nebula geometry (`file = "geometry.tri"`) and its materials
+  (`materials = ["silicon", "pmma"]`, for material ids 0, 1, ...). It must
+  have its own detector plane. `[beam] step` is required, and by default the
+  scan covers the whole geometry.
+
+In both, materials are named after their files in `build/materials`.
+
+The other parts are:
+
 - `[beam]`: the energy and starting height of the primary electrons, the
   number of electrons per pixel, the size of the beam spot, and the scanned
   area (`x`, `y`: its outer edges in nm; `step`: the pixel size).
@@ -150,8 +161,8 @@ A run file has four parts; the comments in the examples explain each value:
   quadrant detector is `energy = [50, inf]` with an `azimuth` quarter and a
   `polar` range set by the detector's hole and outer radius.
 
-To simulate your own surface, copy one of the examples, point `file` to your
-PNG and adjust the values.
+To simulate your own sample, copy the example for your kind of geometry, point
+`file` to your PNG or .tri file and adjust the values.
 
 
 ## Citing
