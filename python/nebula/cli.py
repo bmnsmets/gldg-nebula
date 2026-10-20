@@ -1,18 +1,8 @@
-"""The nebula command: run a simulation defined in a TOML file, or plot its results.
+"""The nebula command.
 
-Usage:
-
-- ``nebula RUN.toml [-o OUTPUT] [--seed N] [--cpu | --gpu] [--keep DIR] [--plot] [-q]``
-  runs the simulation, printing what it runs and its progress on stderr. See `nebula.config` for the file format; the yields per
-  detector per pixel, and the height of the highest surface at each beam
-  position, are written to a safetensors file (see
-  `nebula.simulate.save_results`); with ``--plot`` they are also plotted as
-  NAME-plot.png next to it, with NAME the name of the results file without
-  extension.
-- ``nebula plot RESULTS.safetensors [-o FIGURE] [--detectors NAME ...]
-  [--cmap NAME] [--percentile HIGH] [--dpi N]``
-  plots such a file (see `nebula.imaging.plot_results`), by default as
-  RESULTS-plot.png next to it.
+``nebula RUN.toml`` runs a simulation (see `nebula.config`) and saves its
+results (see `nebula.simulate.save_results`); ``nebula plot RESULTS.safetensors``
+plots them. ``nebula -h`` and ``nebula plot -h`` list the options.
 """
 
 import argparse
@@ -27,16 +17,12 @@ from .config import ConfigError, load_config
 from .simulate import run, save_results
 
 PLOT_DESCRIPTION = """\
-Plot the results of a run: the height of the highest surface at each beam
-position (if the file has it) and the yield map of every detector in the
-file, whatever their names.
+Plot the results of a run: the surface height, then the yield map of each
+detector, titled with its mean yield and filters.
 
-Detectors are shown in the order of the run file stored in the safetensors
-file, each titled with its mean yield and filters. Yield maps are greyscale
-(black low, white high, like SEM images), each with its own colour bar that
-starts at 0 and ends at the 99th percentile of its values, so a few noisy
-pixels do not set the scale. The z-map uses the viridis colour map and its full range.
-Pixels without primary electrons are red."""
+Yield maps are greyscale (like SEM images), scaled from 0 to the 99th
+percentile so that a few noisy pixels do not set the scale. The surface height
+is in colour over its full range. Pixels without primary electrons are red."""
 
 PLOT_EPILOG = """\
 examples:
@@ -50,11 +36,10 @@ nebula RUN.toml [-o OUTPUT] [--seed SEED] [--cpu | --gpu] [--keep DIR] [--plot] 
        nebula plot RESULTS.safetensors [-o FIGURE] [options]"""
 
 MAIN_DESCRIPTION = """\
-Run a Nebula simulation defined in a TOML file: make (or read) the geometry
-and primary electrons, run nebula_gpu (or nebula_cpu_mt without a GPU), apply the
-detectors of the run file, save the yield per detector per pixel (and the
-height of the highest surface at each beam position) as a safetensors file,
-and, with --plot, plot them as NAME-plot.png next to it.
+Run the Nebula simulation described in a TOML file: make the geometry and primary
+electrons, run nebula_gpu (nebula_cpu_mt without a GPU), apply the detectors,
+and save the yield maps and surface height as a safetensors file. With --plot,
+also plot them as NAME-plot.png next to it.
 
 commands:
   nebula RUN.toml                    run a simulation (options below)
@@ -75,11 +60,9 @@ See the documentation of nebula.config for the format of run files."""
 
 
 class _Console:
-    """Information lines and a progress bar for Nebula on stderr, for 'nebula RUN.toml'.
+    """Status lines and a progress bar on stderr, for 'nebula RUN.toml'.
 
-    The bar (tqdm) appears when Nebula first reports progress and is closed
-    before the next information line. tqdm leaves it out when stderr is not a
-    terminal; with ``quiet`` nothing is printed at all.
+    The bar shows only on a terminal; with ``quiet`` nothing is printed.
     """
 
     def __init__(self, *, quiet: bool = False, file=None, disable: bool | None = None):
@@ -96,7 +79,7 @@ class _Console:
     def progress(self, fraction: float | None) -> None:
         if self.quiet:
             return
-        # Nebula counts the primaries it has started; the last ones still run
+        # Nebula counts primaries started, so at 100 % the last ones still run
         description = (
             "pre-scan"
             if fraction is None
@@ -113,13 +96,11 @@ class _Console:
                 desc=description,
                 file=self.file,
                 disable=self.disable,
-                # Terminals that report no size get 80 x 24, else tqdm hides the
-                # bar; on wide terminals the bar stays 80 columns at most
+                # At most 80 columns; a size must be given, or tqdm may hide the bar
                 ncols=min(size.columns, 80),
                 nrows=size.lines,
                 bar_format="{l_bar}{bar}| [{elapsed}<{remaining}]",
             )
-        # Nebula reports once a second, so show every report
         self.bar.set_description_str(description, refresh=False)
         if fraction is not None:
             self.bar.update(100 * fraction - self.bar.n)
@@ -140,11 +121,7 @@ class _Console:
 def _save_plot(
     results: Path, output: Path | None = None, dpi: int = 100, **options
 ) -> Path:
-    """Plot a results file with `plot_results` and save the figure.
-
-    By default the figure is NAME-plot.png next to the results, with NAME
-    their file name without extension.
-    """
+    """Plot a results file and save the figure, by default as NAME-plot.png next to it."""
     import matplotlib
 
     matplotlib.use("Agg")  # no window, and no display needed
@@ -312,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"saved {output}")
 
     if args.plot:
-        # The results are saved, so a failing plot only gets a warning
+        # The results are already saved, so a failed plot is only a warning
         try:
             print(f"saved {_save_plot(output)}")
         except Exception as error:  # noqa: BLE001 - any plotting problem

@@ -1,18 +1,12 @@
-"""Building Nebula geometry, starting from height maps (z-maps).
+"""Building Nebula geometry from height maps (z-maps), and plotting it.
 
-A z-map is a two-dimensional float32 array ``zmap[ix, iy]`` of surface heights
-in nm. The first index runs along x (to the right), the second along y
-(upwards), the same convention as Nebula's coordinates and the ``px``/``py``
-pixel indices. Seen from above (+z), a z-map therefore looks like an image
-displayed with ``plt.imshow(zmap.T, origin="lower")``. A z-map has no lateral
-scale of its own; the size of its pixels in nm is given when it is turned into
-triangles.
+A z-map is a float32 array ``zmap[ix, iy]`` of surface heights in nm, with x to
+the right and y up (show it with ``plt.imshow(zmap.T, origin="lower")``). Its
+pixel size is given when it is turned into triangles.
 
-`triangulate_zmap` turns a z-map into Nebula triangles. It treats the z-map as
-samples of a smooth surface and uses as few triangles as possible while staying
-within a given height tolerance of every sample: flat areas get a few large
-triangles, slopes and edges many small ones. `plot_triangles` shows such
-geometry in 3-D, coloured by material.
+`triangulate_zmap` makes triangles that follow the z-map within a height
+tolerance: few large ones on flat areas, many small ones on slopes and edges.
+`plot_triangles` shows geometry in 3-D.
 """
 
 import os
@@ -27,7 +21,7 @@ from .io.triangles import SpecialMaterial, make_triangles
 
 __all__ = ["height_map", "plot_triangles", "triangulate_zmap", "zmap_from_png"]
 
-# ITU-R 601 luma, as used by Pillow to convert colour images to greyscale
+# Weights of red, green and blue in greyscale, as Pillow uses
 _LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114])
 
 
@@ -36,37 +30,30 @@ def zmap_from_png(
     height: float,
     base: float = 0.0,
 ) -> np.ndarray:
-    """Read a PNG image as a z-map.
+    """Read a PNG image as a z-map: black is ``base``, white ``base + height``.
 
-    The intensity of each pixel is mapped linearly to a height: black becomes
-    ``base`` and white becomes ``base + height``, so
-    ``z = base + I / I_max * height``, with ``I_max`` = 255 for 8-bit and
-    65535 for 16-bit images. Colour images are converted to greyscale with
-    ``0.299 R + 0.587 G + 0.114 B``; transparency is ignored. 16-bit colour
-    images are read with 8-bit precision.
-
-    The bottom-left pixel of the image becomes ``zmap[0, 0]``, so the z-map
-    seen from above looks like the image.
+    Grey levels in between are linear. Colour images are turned to greyscale
+    (16-bit colour with 8-bit precision); transparency is ignored. The
+    bottom-left pixel becomes ``zmap[0, 0]``, so seen from above the z-map
+    looks like the image.
 
     Args:
         file: Path of the PNG file, or an open binary file.
-        height: Height of white pixels above black ones, in nm. May be
-            negative, to make white pixels lower.
-        base: Height of black pixels, in nm.
+        height: Height of white above black, in nm; negative makes white lower.
+        base: Height of black, in nm.
 
     Returns:
-        A float32 array ``zmap[ix, iy]`` with shape (image width, image height).
+        A float32 array ``zmap[ix, iy]`` of shape (image width, image height).
 
     Raises:
-        ValueError: If ``height`` or ``base`` is not finite, or the file is not
-            a PNG image.
+        ValueError: If ``height`` or ``base`` is not finite, or the file is not a PNG.
     """
     if not (np.isfinite(height) and np.isfinite(base)):
         raise ValueError("height and base must be finite")
 
     if isinstance(file, (str, os.PathLike)):
         file = os.fspath(file)
-    # For PNG files, imread returns floats from 0 to 1, scaled by the bit depth
+    # imread gives PNG pixels as 0 (black) to 1 (white), whatever the bit depth
     try:
         pixels = image.imread(file, format="png")
     except SyntaxError as error:  # what Pillow raises for files that are not PNG
@@ -84,12 +71,11 @@ def zmap_from_png(
 def _axis_samples(
     n: int, pixel_size: float, box: float, axis: str
 ) -> tuple[np.ndarray, int, bool]:
-    """Sample coordinates along one axis of the z-map padded to the box size.
+    """Sample positions along one axis: the pixel centres, padded to the box.
 
-    Returns the coordinates, the number of zero pixels added on each side, and
-    whether the axis is padded at all. Besides the pixel centres, there is one
-    extra sample on each box edge: it holds the edge value of the z-map if the
-    z-map fills the box, or is zero if the box is larger.
+    Returns the positions, the number of zero pixels added on each side, and
+    whether the box is larger than the z-map. The first and last positions
+    are the box edges.
     """
     width = n * pixel_size
     padded = not np.isclose(box, width)
@@ -97,23 +83,20 @@ def _axis_samples(
         raise ValueError(
             f"box size along {axis} ({box} nm) must be at least the z-map size ({width} nm)"
         )
-    # Whole zero pixels that fit on each side; a narrower rest up to the box
-    # edge is covered by the edge sample
+    # Whole zero pixels on each side; the edge sample covers any narrower rest
     pad = int(np.floor((box - width) / (2 * pixel_size) + 1e-9)) if padded else 0
     centres = (np.arange(-pad, n + pad) - (n - 1) / 2) * pixel_size
     return np.concatenate([[-box / 2], centres, [box / 2]]), pad, padded
 
 
 def _greedy_tin(points: np.ndarray, z: np.ndarray, start: np.ndarray, max_error: float):
-    """Triangulate samples with as few vertices as possible (greedy insertion).
+    """Triangulate samples using few of them as vertices.
 
-    Starting from the samples ``start``, repeatedly adds, in every triangle
-    that has samples further than ``max_error`` (in nm) from the triangulated
-    surface, the sample that is furthest away, until all samples are within
-    ``max_error``.
+    Starting from ``start``, each round adds, per triangle, the sample furthest
+    from the surface, until all samples are within ``max_error`` (nm).
 
     Returns:
-        Indices of the vertices into ``points``, and the triangles as indices
+        The vertices as indices into ``points``, and the triangles as indices
         into the vertices.
     """
     vertices = np.asarray(start)
@@ -132,14 +115,14 @@ def _greedy_tin(points: np.ndarray, z: np.ndarray, start: np.ndarray, max_error:
         bad = np.flatnonzero(error > max_error)
         if len(bad) == 0:
             return vertices, tri.simplices
-        # The worst sample in each triangle that has samples too far away
+        # The worst sample of each triangle that has one too far away
         bad = bad[np.lexsort((-error[bad], simplex[bad]))]
         _, first = np.unique(simplex[bad], return_index=True)
         vertices = np.concatenate([vertices, bad[first]])
 
 
 def _rectangle(x0: float, x1: float, y0: float, y1: float, z: float) -> list:
-    """Two horizontal triangles covering a rectangle, counter-clockwise from above."""
+    """Two horizontal triangles covering a rectangle, normals up."""
     a, b, c, d = (x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)
     return [[a, b, c], [a, c, d]]
 
@@ -156,77 +139,44 @@ def triangulate_zmap(
     detector: int | None = SpecialMaterial.DETECTOR,
     detector_z: float | None = None,
 ) -> np.ndarray:
-    """Turn a z-map into Nebula geometry.
+    """Turn a z-map into Nebula geometry: ``material`` below the surface, vacuum above.
 
-    The surface separates ``material`` below from vacuum above. It is an
-    adaptive triangulation that is within ``tolerance`` times the height range
-    of the z-map (its maximum minus its minimum) of every z-map sample.
-    The z-map's pixels are ``pixel_size`` wide, with the samples at their
-    centres, so a z-map of N pixels is N * pixel_size wide.
+    The geometry is centred on the origin. A box larger than the z-map is
+    filled with height 0 around it; otherwise the z-map's edge heights extend
+    to the box edges. Larger boxes take longer to triangulate. The box can get
+    a terminator plane at the bottom, mirrors on its sides and a detector plane
+    at the top, as in Nebula's SEM tutorial.
 
-    The geometry is centred on the origin: x runs from -Lx/2 to Lx/2 and y
-    from -Ly/2 to Ly/2, with (Lx, Ly) the box size. If the box is the size of
-    the z-map, the edge values of the z-map are held up to the box edges. If
-    it is larger, the z-map is placed in the middle and padded with zeros to
-    the box size before it is triangulated, so the surface goes from the edge
-    values to height 0 over one pixel beyond the z-map. The padding is whole
-    pixels on each side, plus a narrower strip at the box edges if the box is
-    not a whole number of pixels larger. The number of samples, and so the
-    time to triangulate, grows with the area of the box.
-
-    Optionally, the box gets a terminator plane at the bottom,
-    mirrors on the four sides and a detector plane at the top, as in Nebula's
-    SEM tutorial.
-
-    Nebula's simulation domain is the extent of all triangles plus 1 nm.
-    Electrons that leave it are lost, so without a terminator plane the
-    material ends at the lowest point of the surface, and electrons that pass
-    through the detector plane are lost right after it. Primary electrons must
-    start between the top of the surface and the detector plane; a
-    `SpecialMaterial.DETECTOR` plane detects electrons crossing it in either
-    direction.
+    Electrons that leave the box (plus 1 nm) are lost, so without a terminator
+    the material ends at the lowest point of the surface. Primary electrons
+    must start between the surface and the detector plane.
 
     Args:
-        zmap: Heights in nm, indexed ``zmap[ix, iy]`` (see the module docstring).
-        pixel_size: Width of the z-map's pixels in nm.
-        tolerance: Largest allowed height difference between the
-            triangulated surface and any z-map sample, as a fraction of the
-            z-map's height range: 0.01 means 1 % of max - min. For a z-map
-            from an 8-bit PNG, a value below 1/255 makes the triangulation
-            follow the steps between grey levels, which costs many triangles.
-            A flat z-map is reproduced exactly.
-        box_size: Size (Lx, Ly) of the box in nm, or one number for a square
-            box. Each side must be at least the z-map size. By default, the
-            box is the size of the z-map.
-        material: Material id below the surface. Above it is vacuum.
-        terminator_z: Height in nm of the terminator plane at the bottom of
-            the box, or None for none. Must be below the surface. It should be deeper
-            than electrons can travel into the material: about 2 to 10 times
-            the electron range at the beam energy. In silicon the range is
-            roughly 10 nm at 0.5 keV, 0.5 um at 5 keV and 9 um at 30 keV, so
-            for example -100 nm suits 0.5 to 1 keV, -1000 nm up to 5 to
-            8 keV, and the default -10000 nm up to about 30 keV. Too shallow
-            removes electrons that would have backscattered; too deep only
-            makes the simulation slower (about 30 % for -10000 nm instead
-            of -100 nm at 0.5 keV).
-        mirrors: Whether to put mirrors on the four sides of the box, from the
-            terminator (or the lowest point of the surface) to the detector
-            (or the highest point of the surface).
-        detector: Material id of the detector plane at the top of the box,
-            such as `SpecialMaterial.DETECTOR` or
-            `SpecialMaterial.DETECTOR_LT50`, or None for none.
-        detector_z: Height in nm of the detector plane. Must be above the
-            surface. By default, 10 nm above its highest point.
+        zmap: Heights in nm, ``zmap[ix, iy]``.
+        pixel_size: Width of a z-map pixel in nm.
+        tolerance: Largest height error allowed, as a fraction of the z-map's
+            height range (0.01 is 1 %). For an 8-bit PNG, below 1/255 follows
+            every grey-level step and costs many triangles.
+        box_size: Box size (Lx, Ly) in nm, or one number for a square; at least
+            the z-map size, which is the default.
+        material: Material id below the surface.
+        terminator_z: Height in nm of the terminator plane, or None. It must be
+            deeper than electrons get; in silicon about -100 nm up to 1 keV,
+            -1000 nm up to 5 keV and -10000 nm up to 30 keV. Deeper only costs time.
+        mirrors: Whether to put mirrors on the four sides, from the terminator
+            (or the surface's lowest point) to the detector (or its highest).
+        detector: Material id of the detector plane, such as
+            `SpecialMaterial.DETECTOR`, or None.
+        detector_z: Height in nm of the detector plane; by default 10 nm above
+            the surface.
 
     Returns:
-        An array of triangles with dtype `TRIANGLE_DTYPE`, which can be
-        written with `write_tri`.
+        Triangles with dtype `TRIANGLE_DTYPE`.
 
     Raises:
         ValueError: If an argument is invalid, the box is smaller than the
-            z-map, the terminator or detector plane
-            would cut the surface, or the mirrors would have no height (a flat
-            surface without terminator and detector).
+            z-map, a plane would cut the surface, or the mirrors would have no
+            height.
     """
     zmap = np.asarray(zmap, dtype=np.float64)
     if zmap.ndim != 2 or zmap.size == 0:
@@ -246,8 +196,8 @@ def triangulate_zmap(
     x, pad_x, padded_x = _axis_samples(nx, pixel_size, box_x, "x")
     y, pad_y, padded_y = _axis_samples(ny, pixel_size, box_y, "y")
 
-    # Samples: the z-map padded with zeros to the box, plus samples on the box
-    # edges that are zero, or hold the edge values if the z-map fills the box
+    # The z-map padded with zeros to the box, plus samples on the box edges:
+    # zero, or the edge values if the z-map fills the box
     z = np.pad(zmap, [(pad_x, pad_x), (pad_y, pad_y)])
     z = np.pad(z, [(1, 1), (0, 0)], mode="constant" if padded_x else "edge")
     z = np.pad(z, [(0, 0), (1, 1)], mode="constant" if padded_y else "edge")
@@ -258,11 +208,11 @@ def triangulate_zmap(
         ([0, 0, -1 % len(x), -1 % len(x)], [0, -1 % len(y), 0, -1 % len(y)]), gx.shape
     )
 
-    # The floor keeps rounding errors from counting as errors for flat z-maps
+    # At least 1e-6 nm, so that rounding does not split flat z-maps
     max_error = max(tolerance * float(zmap.max() - zmap.min()), 1e-6)
     vertices, simplices = _greedy_tin(points, z, corners, max_error)
     surface = np.concatenate([points[vertices], z[vertices, None]], axis=1)[simplices]
-    # Counter-clockwise seen from above, so that the normals point up
+    # Drop triangles with no area seen from above; turn the rest so normals point up
     edge1 = surface[:, 1, :2] - surface[:, 0, :2]
     edge2 = surface[:, 2, :2] - surface[:, 0, :2]
     area = edge1[:, 0] * edge2[:, 1] - edge1[:, 1] * edge2[:, 0]
@@ -313,24 +263,18 @@ def triangulate_zmap(
 def height_map(
     triangles: np.ndarray, xs: npt.ArrayLike, ys: npt.ArrayLike
 ) -> np.ndarray:
-    """Height of the highest surface of a geometry on a grid, seen from above.
+    """Height of the top surface of a geometry at each grid point, seen from above.
 
-    At each grid point (xs[ix], ys[iy]), this is the largest height of the
-    triangles that have a material on at least one side (interfaces between a
-    material and vacuum or another material) and that cover the point seen
-    from above. Mirrors, detectors, terminators and no-op triangles are left
-    out. This works for any geometry: where it has several heights at a point,
-    as at vertical walls or overhangs, the highest is taken. Vertical
-    triangles themselves are skipped; the top edge of a wall is part of the
-    triangles next to it.
+    Only triangles with a material on a side count (not mirrors, detectors and
+    the like). Where there are several heights, as under overhangs, the highest
+    is taken.
 
     Args:
         triangles: Array with dtype `TRIANGLE_DTYPE`.
-        xs, ys: Coordinates of the grid in nm.
+        xs, ys: Grid coordinates in nm.
 
     Returns:
-        The heights in nm, float64 ``[ix, iy]`` with shape (len(xs), len(ys));
-        NaN where no triangle covers the point.
+        Heights in nm, float64 ``[ix, iy]``; NaN where no triangle covers the point.
     """
     triangles = np.asarray(triangles)
     xs = np.asarray(xs, dtype=np.float64)
@@ -345,8 +289,7 @@ def height_map(
     )
     vertical = det == 0
 
-    # Work on sorted coordinates, so that each triangle's bounding box is a
-    # block of grid points
+    # On sorted coordinates, the grid points near a triangle form one block
     x_order, y_order = np.argsort(xs), np.argsort(ys)
     x_sorted, y_sorted = xs[x_order], ys[y_order]
     sorted_heights = np.full_like(heights, np.nan)
@@ -372,7 +315,7 @@ def height_map(
     return heights
 
 
-# Plot styles of special materials, drawn as outlines: label, colour
+# Label and colour of special materials, drawn as outlines
 _SPECIAL_STYLES = {
     SpecialMaterial.TERMINATOR: ("terminator", "tab:red"),
     SpecialMaterial.MIRROR: ("mirrors", "tab:blue"),
@@ -381,7 +324,7 @@ _SPECIAL_STYLES = {
     SpecialMaterial.DETECTOR_GE50: ("detector >= 50 eV", "darkgreen"),
     SpecialMaterial.NOP: ("no-op", "tab:gray"),
 }
-# Colours of material interfaces: those of tab10 not used for special materials
+# Colours of material interfaces: the tab10 colours not used above
 _INTERFACE_COLOURS = [
     "tab:orange",
     "tab:purple",
@@ -390,8 +333,7 @@ _INTERFACE_COLOURS = [
     "tab:olive",
     "tab:cyan",
 ]
-# Horizontal planes, left out when outside the z range; other special
-# triangles (vertical walls) are cut off at the z range instead
+# Horizontal planes: left out when outside the z range (walls are cut off instead)
 _PLANES = {
     SpecialMaterial.TERMINATOR,
     SpecialMaterial.DETECTOR,
@@ -401,8 +343,7 @@ _PLANES = {
 
 
 def _triangle_groups(triangles: np.ndarray) -> np.ndarray:
-    """Group of each triangle: its special material id, or 0 for an interface
-    between materials (including vacuum)."""
+    """Per triangle: its special material id, or 0 for an interface between materials."""
     special = np.array(list(_SPECIAL_STYLES))
     m_in, m_out = triangles["material_in"], triangles["material_out"]
     return np.where(
@@ -411,7 +352,7 @@ def _triangle_groups(triangles: np.ndarray) -> np.ndarray:
 
 
 def _shading(polys: np.ndarray) -> np.ndarray:
-    """Brightness from 0.4 to 1 of triangles lit from the upper left, for plots."""
+    """Brightness (0.4 to 1) of triangles lit from the upper left."""
     normals = np.cross(polys[:, 1] - polys[:, 0], polys[:, 2] - polys[:, 0])
     normals /= np.linalg.norm(normals, axis=1, keepdims=True)
     normals[normals[:, 2] < 0] *= -1  # light both sides alike
@@ -445,10 +386,10 @@ def _subdivide(polys: np.ndarray, max_edge: float) -> tuple[np.ndarray, np.ndarr
 
 
 def _strips(segments: np.ndarray, max_length: float, half_width: float) -> np.ndarray:
-    """Thin strips of triangles along line segments (N, 2, 3), for plots.
+    """Line segments (N, 2, 3) drawn as thin triangles, to plot lines among surfaces.
 
-    Each segment is cut into pieces of at most max_length, and each piece
-    becomes two crossed strips, so that it is visible from any direction.
+    Each piece of at most max_length becomes two crossed strips, visible from
+    any direction.
     """
     start, end = segments[:, 0], segments[:, 1]
     count = np.maximum(
@@ -482,11 +423,14 @@ def _edges(polys: np.ndarray) -> np.ndarray:
 
 
 def _unique_edges(edges: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Index of the first occurrence of each edge (in either direction), and
-    for every edge the number of the distinct edge it is."""
+    """Find edges that are the same in either direction.
+
+    Returns the index of the first copy of each distinct edge, and for every
+    edge the number of its distinct edge.
+    """
     ends = np.round(edges, 6).reshape(-1, 6)
     first, second = ends[:, :3], ends[:, 3:]
-    # Put the lexicographically smaller end first, so both directions match
+    # Put the smaller end (by x, then y, then z) first, so both directions match
     difference = second - first
     component = np.argmax(difference != 0, axis=1)
     smaller_first = difference[np.arange(len(ends)), component] >= 0
@@ -500,8 +444,7 @@ def _unique_edges(edges: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def _outline(polys: np.ndarray) -> np.ndarray:
     """Edges of triangles, without those between triangles in the same plane.
 
-    For planes and walls made of rectangles, this leaves the outlines of the
-    rectangles, without their diagonals.
+    For rectangles this leaves the outline, without the diagonal.
     """
     edges = _edges(polys)
     normals = np.cross(polys[:, 1] - polys[:, 0], polys[:, 2] - polys[:, 0])
@@ -528,35 +471,23 @@ def plot_triangles(
 ):
     """Plot Nebula geometry in 3-D, coloured by material.
 
-    Interfaces between materials (including vacuum) are drawn as surfaces,
-    with one colour per pair of materials, and shaded so that the relief of a
-    surface is visible. Terminators, mirrors, detectors and no-op triangles are
-    drawn as outlines, in fixed colours.
-
-    By default, the plot shows the height range of the interfaces and
-    detectors, plus half that range below it. Terminator and detector planes
-    outside this range (such as the 10 um deep terminator of
-    `triangulate_zmap`) are left out, also from the legend, and mirror walls
-    are cut off at it, so that the surface stays visible. Pass ``z_range`` to
-    show more.
-
-    Matplotlib draws 3-D triangles one by one, in order of the depth of their
-    centres, so this is slow for more than a few 10^4 triangles. To make
-    surfaces and outlines hide each other correctly, large triangles are split
-    into smaller pieces for drawing (the triangles themselves are not
-    changed), and outlines are drawn as thin strips of triangles.
+    Interfaces between materials are shaded surfaces, one colour per pair of
+    materials. Terminators, mirrors and detectors are outlines. By default the
+    height range is that of the interfaces and detectors, plus half of it
+    below; planes outside it (like a deep terminator) are left out and walls
+    cut off. Slow beyond a few 10^4 triangles.
 
     Args:
         triangles: Array with dtype `TRIANGLE_DTYPE`, for example from
             `triangulate_zmap` or `read_tri`.
         ax: 3-D axes to plot into. By default, a new figure is made.
         z_range: Lowest and highest z to show, in nm.
-        z_exaggeration: Factor by which heights are stretched. By default, the
-            height of the plot is at least 30 % of its width; 1 is true scale.
+        z_exaggeration: Stretch of heights; 1 is true scale. By default the plot
+            is at least 30 % as high as it is wide.
         material_names: Names for material ids in the legend, such as
             ``{0: "silicon"}``. By default, the ids are shown.
-        edges: Whether to draw the edges of the interface triangles, to show
-            the mesh. They are drawn on top, so hidden edges show too.
+        edges: Whether to draw the mesh of the interfaces (on top, so hidden
+            edges show too).
 
     Returns:
         The 3-D axes.
@@ -602,11 +533,9 @@ def plot_triangles(
     scale = np.array([1.0, 1.0, z_exaggeration])  # from nm to plotted lengths
     handles = []
 
-    # Matplotlib sorts faces by depth only within one collection, and only by
-    # their centres. So everything that should hide or be hidden goes into one
-    # collection: the interfaces, split into pieces of at most 1/16 of the
-    # width, and the outlines of special materials as thin strips, cut into
-    # pieces of the same length.
+    # Matplotlib sorts faces by the depth of their centres, and only within
+    # one collection. So surfaces and outlines go into one collection, all in
+    # pieces of at most 1/16 of the width, so that they hide each other right.
     polys, faces, seams = [], [], []
 
     # Interfaces between materials, one colour per pair, shaded

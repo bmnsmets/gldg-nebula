@@ -40,10 +40,9 @@ def scan_primaries(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Primary electrons for a beam scanned over the pixels xs x ys.
 
-    Each pixel gets ``avg_electrons`` electrons, or a Poisson-distributed
-    number with that mean. They start at height ``z`` around the pixel centre,
-    with a Gaussian spread ``beam_std`` in x and y, and go in the direction
-    ``axis``. Their ``px`` and ``py`` are the indices of the pixel in xs and ys.
+    The electrons start at height ``z`` near each pixel centre (normal spread
+    ``beam_std`` in x and y) and move along ``axis``. Their ``px``, ``py`` are
+    the pixel's indices in xs and ys.
 
     Args:
         xs, ys: Pixel centres in nm.
@@ -51,14 +50,13 @@ def scan_primaries(
         z: Starting height in nm.
         axis: Direction of the electrons.
         avg_electrons: Mean number of electrons per pixel.
-        poisson: Whether to draw the number per pixel from a Poisson
-            distribution. Otherwise, ``avg_electrons`` is rounded.
-        beam_std: Standard deviation of the starting position in x and y, in nm.
+        poisson: Draw the number per pixel at random (Poisson) instead of
+            rounding ``avg_electrons``.
+        beam_std: Standard deviation of the start position in x and y, in nm.
         rng: Random number generator.
 
     Returns:
-        The electrons, and the number of electrons per pixel (int64, shape
-        (len(xs), len(ys))).
+        The electrons, and the number per pixel (int64, shape (len(xs), len(ys))).
     """
     xs, ys = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
     shape = (len(xs), len(ys))
@@ -66,10 +64,11 @@ def scan_primaries(
         counts = rng.poisson(avg_electrons, size=shape)
     else:
         counts = np.full(shape, round(avg_electrons))
-    # The values shared by all electrons are checked once, as make_electrons
-    # would check them for each electron
+    # Check the values shared by all electrons once, not per electron
     make_electrons([0, 0, z], axis, energy, [0, 0])
-    if not (np.all(np.isfinite(xs)) and np.all(np.isfinite(ys)) and np.isfinite(beam_std)):
+    if not (
+        np.all(np.isfinite(xs)) and np.all(np.isfinite(ys)) and np.isfinite(beam_std)
+    ):
         raise ValueError("position and direction must be finite")
 
     ix = np.repeat(np.arange(shape[0]), counts.sum(axis=1))
@@ -79,7 +78,9 @@ def scan_primaries(
     electrons["x"] = xs[ix] + rng.normal(0, beam_std, n)
     electrons["y"] = ys[iy] + rng.normal(0, beam_std, n)
     electrons["z"] = z
-    for name, value in zip(["dx", "dy", "dz"], np.asarray(axis, dtype=np.float64), strict=True):
+    for name, value in zip(
+        ["dx", "dy", "dz"], np.asarray(axis, dtype=np.float64), strict=True
+    ):
         electrons[name] = value
     electrons["E"] = energy
     electrons["px"] = ix

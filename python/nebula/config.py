@@ -1,7 +1,7 @@
 """Simulation runs defined in TOML files.
 
-A run file describes the geometry (a z-map image or a triangle file), the beam
-and its scan, and the detectors that select detected electrons afterwards::
+A run file gives the geometry (a z-map image or a triangle file), the beam and
+its scan, and the detectors::
 
     name = "cell65"
     seed = 1                          # optional; random if left out
@@ -36,37 +36,32 @@ and its scan, and the detectors that select detected electrons afterwards::
     energy = [50, inf]
     azimuth = [0, 90]
 
-Instead of ``[geometry.zmap]``, the geometry can be a ready-made Nebula
-triangle file (see `nebula.io.triangles`)::
+Instead of ``[geometry.zmap]``, the geometry can be a Nebula triangle file
+(see `nebula.io.triangles`)::
 
     [geometry]
     file = "tri/geometry_000000.tri"  # relative to the TOML file
     materials = ["silicon", "pmma"]   # .mat files for material ids 0, 1, ...
 
-It must have a detector plane (material -126) above the beam. Such a file has
-no pixel size, so ``[beam] step`` is required; ``x`` and ``y`` default to the
-extent of the triangles.
+It must have a detector plane (material -126) above the beam. It has no pixel
+size, so ``[beam] step`` is required; ``x`` and ``y`` default to the extent of
+the triangles.
 
-``x`` and ``y`` are the outer edges of the scanned area, which is divided into
-pixels of ``step`` by ``step``; the beam scans their centres. For example,
-``x = [-100, 100]`` with ``step = 1`` gives 200 pixels, centred at -99.5, ...,
-99.5. Without ``x``, ``y`` and ``step``, the beam scans the centres of the
-z-map's pixels.
+``x`` and ``y`` are the edges of the scanned area, cut into ``step`` x ``step``
+pixels; the beam hits their centres. ``x = [-100, 100]`` with ``step = 1``
+gives 200 pixels at -99.5, ..., 99.5. By default the beam hits the centre of
+each z-map pixel.
 
-Detectors select electrons that hit Nebula's detector plane (at
-``z_detector``), which itself records every electron. Each filter is a range
-``[min, max]``, min included and max not; ``inf`` and ``-inf`` give open ends.
-All filters of a detector must hold:
+The detector plane (at ``z_detector``) records every electron that reaches
+it; each detector keeps those that pass all its filters. A filter is a range
+``[min, max]`` (min included, max not; ``inf`` for no limit):
 
-- ``energy``: kinetic energy at the detector plane, in eV;
-- ``dx``, ``dy``: position where the electron hits the detector plane, minus
-  the position of the beam for its pixel, in nm;
-- ``r``: distance from the beam axis on the detector plane, in nm;
-- ``polar``: angle between the electron's direction and +z, in degrees
-  (0 is straight up);
-- ``azimuth``: angle of the direction in the x-y plane, in degrees from +x
-  counter-clockwise, 0 to 360. A range with min > max wraps around 0, so
-  ``[315, 45]`` is centred on +x.
+- ``energy``: kinetic energy in eV;
+- ``dx``, ``dy``: where the electron hits the plane, relative to the beam, in nm;
+- ``r``: distance from the beam on the plane, in nm;
+- ``polar``: angle from straight up (+z), in degrees;
+- ``azimuth``: direction in the x-y plane, in degrees counter-clockwise from
+  +x (0 to 360). min > max wraps around 0: ``[315, 45]`` is centred on +x.
 """
 
 import dataclasses
@@ -87,7 +82,7 @@ __all__ = [
 ]
 
 FILTERS = ("energy", "dx", "dy", "r", "polar", "azimuth")
-# Names used for other tensors in the output file
+# Names taken by other arrays in the results file, so not for detectors
 RESERVED_NAMES = ("primaries", "x", "y", "zmap")
 
 Range = tuple[float, float]
@@ -160,7 +155,7 @@ class Config:
     seed: int = 0
     path: Path | None = None
     text: str = ""
-    random_seed: bool = False  # the file has no seed, so it was drawn at random
+    random_seed: bool = False  # True if the file had no seed and one was drawn
 
 
 def _number(value, where: str) -> float:
@@ -351,18 +346,11 @@ def _detectors(table: dict) -> tuple[Detector, ...]:
 
 
 def load_config(path: str | os.PathLike) -> Config:
-    """Read a simulation run from a TOML file.
-
-    Args:
-        path: Path of the TOML file. Files it refers to are looked up
-            relative to it.
-
-    Returns:
-        The run.
+    """Read a run file. File paths are relative to it.
 
     Raises:
-        ConfigError: If the file is not valid TOML, a value is missing or
-            invalid, or there are unknown keys.
+        ConfigError: If the file is not valid TOML, or a key is missing,
+            invalid or unknown.
     """
     path = Path(path)
     text = path.read_text()

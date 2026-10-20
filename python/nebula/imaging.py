@@ -1,4 +1,4 @@
-"""Turning detected electrons into images: detectors, yields per pixel and plots."""
+"""From detected electrons to images: detector filters, yield per pixel, plots."""
 
 import math
 import os
@@ -30,18 +30,17 @@ def electron_quantities(
     ys: npt.ArrayLike,
     keys: Iterable[str] = FILTERS,
 ) -> dict[str, np.ndarray]:
-    """The quantities detectors filter on, for each detected electron.
+    """The values detectors filter on (see `nebula.config`), per electron.
 
     Args:
-        electrons: Detected electrons (`ELECTRON_DTYPE`), with ``px`` and
-            ``py`` the indices of their pixel in xs and ys.
+        electrons: Detected electrons (`ELECTRON_DTYPE`); ``px``, ``py`` index
+            xs and ys.
         xs, ys: Pixel centres (beam positions) in nm.
-        keys: Which quantities to compute; by default all of them.
+        keys: Which values to compute; by default all.
 
     Returns:
-        ``energy`` (eV), ``dx``, ``dy``, ``r`` (nm, relative to the beam
-        position of the pixel), ``polar`` and ``azimuth`` (degrees), see
-        `nebula.config`; only those in ``keys``. All are float64.
+        float64 arrays by name: ``energy`` (eV), ``dx``, ``dy``, ``r`` (nm,
+        relative to the beam), ``polar``, ``azimuth`` (degrees).
     """
     keys = set(keys)
     xs, ys = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
@@ -73,7 +72,7 @@ def electron_quantities(
 
 
 def detector_mask(detector: Detector, quantities: dict[str, np.ndarray]) -> np.ndarray:
-    """Which electrons a detector selects: all its ranges [min, max) hold."""
+    """Which electrons pass all of a detector's filters [min, max)."""
     mask = np.ones(len(quantities["energy"]), dtype=bool)
     for key in FILTERS:
         bounds = getattr(detector, key)
@@ -95,7 +94,7 @@ def _count_selected(
     ys: np.ndarray,
     shape: tuple[int, int],
 ) -> np.ndarray:
-    """Number of electrons each detector selects per pixel, shape (detectors, pixels)."""
+    """Electrons each detector keeps per pixel, shape (detectors, pixels)."""
     keys = {key for d in detectors for key in FILTERS if getattr(d, key) is not None}
     quantities = electron_quantities(electrons, xs, ys, keys)
     pixel = np.ravel_multi_index((electrons["px"], electrons["py"]), shape)
@@ -111,20 +110,16 @@ def _count_selected(
 
 
 class DetectorCounter:
-    """Counts the electrons each detector selects per pixel, batch by batch.
+    """Counts the electrons each detector keeps per pixel, batch by batch.
 
-    Batches of any size are gathered into chunks of 64K electrons (2.4 MB),
-    which stay in the CPU's cache while their fields are read, and counted on
-    several threads (NumPy releases the GIL); more than 8 threads do not help,
-    as memory bandwidth limits. Counts are integers, so the result does not
-    depend on how the electrons were batched.
-
-    Use it as a context manager, or call `close` when done.
+    Batches are counted on several threads; the result does not depend on how
+    the electrons were split into batches. Use it in a ``with`` block, or call
+    `close` when done.
 
     Args:
         detectors: The detectors.
         xs, ys: Pixel centres in nm.
-        chunk_size: Electrons per chunk.
+        chunk_size: Electrons counted at a time.
         workers: Number of threads; by default up to 8.
     """
 
@@ -142,11 +137,12 @@ class DetectorCounter:
         self.ys = np.asarray(ys, dtype=np.float64)
         self.shape = (len(self.xs), len(self.ys))
         if workers is None:
+            # More threads do not help: counting is limited by memory speed
             workers = max(1, min(8, os.cpu_count() or 1))
         self._chunk_size = chunk_size
         self._pool = ThreadPoolExecutor(max_workers=workers)
-        # Chunks waiting for a thread; limited, so that a slow consumer
-        # holds back the producer instead of queueing all its electrons
+        # Chunks waiting for a thread. Limited, so that a fast producer waits
+        # instead of queueing all its electrons
         self._queued: deque[Future] = deque()
         self._max_queued = 4 * workers
         self._pending: list[np.ndarray] = []  # electrons not yet in a chunk
@@ -167,7 +163,7 @@ class DetectorCounter:
         self._pool.shutdown(wait=True, cancel_futures=True)
 
     def add(self, electrons: np.ndarray) -> None:
-        """Count a batch of detected electrons (`ELECTRON_DTYPE`, with pixels)."""
+        """Count a batch of detected electrons (`ELECTRON_DTYPE`)."""
         if len(electrons) == 0:
             return
         self._pending.append(electrons)
@@ -185,11 +181,7 @@ class DetectorCounter:
         self._pending_size = len(batch) - full
 
     def counts(self) -> np.ndarray:
-        """Wait for all chunks; selected electrons per detector and pixel.
-
-        Returns:
-            int64 array of shape (detectors, pixels), pixels in [ix, iy] order.
-        """
+        """Finish counting; int64 counts of shape (detectors, pixels), pixels in [ix, iy] order."""
         for electrons in self._pending:
             self._submit(electrons)
         self._pending, self._pending_size = [], 0
@@ -201,14 +193,14 @@ class DetectorCounter:
         return total
 
     def images(self, primaries: np.ndarray) -> dict[str, np.ndarray]:
-        """Yield of each detector per pixel: selected electrons per primary.
+        """Yield per pixel of each detector: electrons kept per primary.
 
         Args:
-            primaries: Number of primary electrons per pixel, shape (len(xs), len(ys)).
+            primaries: Primary electrons per pixel, shape (len(xs), len(ys)).
 
         Returns:
-            For each detector, a float32 image ``[ix, iy]``; NaN where a pixel
-            had no primary electrons.
+            A float32 image ``[ix, iy]`` per detector; NaN where there were no
+            primaries.
         """
         images = {}
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -219,7 +211,7 @@ class DetectorCounter:
         return images
 
     def _submit(self, chunk: np.ndarray) -> None:
-        # Raises the errors of counted chunks, and waits if too many are queued
+        # Raise errors of finished chunks; wait if too many are queued
         while self._queued and (
             self._queued[0].done() or len(self._queued) >= self._max_queued
         ):
@@ -245,20 +237,19 @@ def yield_images(
     *,
     _chunk_size: int = 2**16,
 ) -> dict[str, np.ndarray]:
-    """Yield of each detector per pixel: selected electrons per primary.
+    """Yield per pixel of each detector, for all electrons at once.
 
-    The electrons are counted in chunks on several threads, see
-    `DetectorCounter`, which also counts electrons that come in batches.
+    See `DetectorCounter` for electrons that come in batches.
 
     Args:
-        electrons: Detected electrons, with ``px``, ``py`` their pixel.
+        electrons: Detected electrons (`ELECTRON_DTYPE`).
         detectors: The detectors.
         xs, ys: Pixel centres in nm.
-        primaries: Number of primary electrons per pixel, shape (len(xs), len(ys)).
+        primaries: Primary electrons per pixel, shape (len(xs), len(ys)).
 
     Returns:
-        For each detector, a float32 image ``[ix, iy]``; NaN where a pixel had
-        no primary electrons.
+        A float32 image ``[ix, iy]`` per detector; NaN where there were no
+        primaries.
     """
     with DetectorCounter(detectors, xs, ys, chunk_size=_chunk_size) as counter:
         counter.add(electrons)
@@ -297,20 +288,13 @@ def plot_results(
     percentile: float = 99,
     columns: int = 3,
 ):
-    """Plot the results of a run: the z-map and the yield map of each detector.
+    """Plot a results file: the z-map, then the yield map of each detector.
 
-    Reads a safetensors file written by ``nebula RUN.toml`` (see
-    `nebula.simulate.save_results`). Every image in it other than
-    ``primaries``, ``x``, ``y`` and ``zmap`` is a detector, whatever its name;
-    they are shown in the order of the run file stored in the file's metadata
-    (or alphabetically), after the z-map if there is one.
-
-    Yields are shown in greyscale like SEM images (black low, white high) and
-    the z-map in another colour map, so that it is not mistaken for a yield.
-    Each panel has its own colour bar. The yield maps' scales start at 0 and
-    end at the given percentile of their values, so that a few noisy pixels
-    do not set the scale; the z-map uses its full range. Pixels without
-    primary electrons (NaN) are shown in red.
+    Reads a file from `nebula.simulate.save_results`. Detectors appear in the
+    order of the run file. Yield maps are greyscale (like SEM images), scaled
+    from 0 to the given percentile so that a few noisy pixels do not set the
+    scale; the z-map is in colour over its full range. Pixels without
+    primaries are red.
 
     Args:
         source: Path of the safetensors file.
@@ -318,16 +302,15 @@ def plot_results(
             all of them.
         cmap: Colour map of the yield maps.
         zmap_cmap: Colour map of the z-map.
-        percentile: Percentile of each yield map's values at which its
-            colour scale ends (it starts at 0); 100 for the maximum.
+        percentile: Where each yield map's colour scale ends; 100 for the maximum.
         columns: Number of panels per row.
 
     Returns:
         The matplotlib figure.
 
     Raises:
-        ValueError: If ``detectors`` names images that are not in the file, or
-            the file has no images to show.
+        ValueError: If a detector in ``detectors`` is not in the file, or there
+            is nothing to plot.
     """
     import matplotlib.pyplot as plt
     from safetensors import safe_open
@@ -405,7 +388,6 @@ def plot_results(
         ax.set_visible(False)
     for ax, (name, image, title, colours, label) in zip(axes.ravel(), panels):
         finite = image[np.isfinite(image)]
-        # Heights are exact, so the z-map uses its full range
         if not finite.size:
             low, high = 0.0, 1.0
         elif name == "zmap":

@@ -1,4 +1,5 @@
-"""Python front-end for the Nebula electron-matter simulator.
+"""Python tools for the Nebula electron-matter simulator.
 
-Re-exports the high-level API; see the submodules for details.
+Start with `nebula.config` (run files) and `nebula.simulate` (running them);
+`nebula.io` reads and writes Nebula's file formats.
 """

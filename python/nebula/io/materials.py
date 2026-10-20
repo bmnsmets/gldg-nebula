@@ -7,12 +7,11 @@ A .mat file is an HDF5 file, normally made by cstool, with:
   ``fermi``, ``band_gap``, ``phonon_loss``, ``effective_A``), or plain numbers;
 - *tables*, float64 datasets in groups such as ``full_penn`` or
   ``kieft/elastic``, each with a ``units`` attribute;
-- *axes*, HDF5 dimension scales in the same group as the tables they belong to
-  (e.g. ``full_penn/energy``), also with a ``units`` attribute. Several tables
-  can share an axis, and a table dimension can have no axis.
+- *axes*: the coordinates along a table dimension (e.g. ``full_penn/energy``),
+  stored next to its tables (as HDF5 "dimension scales") with a ``units``
+  attribute. Tables can share an axis; a dimension can have none.
 
-Unit strings are kept exactly as they are in the file (e.g. ``"eV"``,
-``"nm^-1"``), because Nebula parses them with its own unit parser.
+Unit strings such as ``"eV"`` or ``"nm^-1"`` are kept as they are, for Nebula to parse.
 
 With Nebula's default physics, a material needs the properties ``barrier``,
 ``fermi``, ``phonon_loss`` and ``effective_A`` (``band_gap`` is optional), and
@@ -20,8 +19,7 @@ the tables ``full_penn/imfp``, ``full_penn/omega_icdf``, ``full_penn/q_icdf``,
 ``ionization/binding_icdf``, ``kieft/elastic/imfp`` and
 ``kieft/elastic/costheta_icdf``.
 
-Material files are large (hundreds of MB), so `read_mat` loads table data only
-when it is used.
+Material files are hundreds of MB, so `read_mat` reads a table only when it is used.
 """
 
 import dataclasses
@@ -47,7 +45,7 @@ class Quantity:
 
 @dataclasses.dataclass(eq=False)
 class Axis:
-    """The coordinates along one dimension of a table (an HDF5 dimension scale)."""
+    """The coordinates along one dimension of a table."""
 
     name: str
     values: np.ndarray
@@ -60,9 +58,9 @@ class Axis:
 
 
 class Table:
-    """A table of a material, with its unit and an optional axis per dimension.
+    """A table of a material: its values, unit and an optional axis per dimension.
 
-    Tables read from a file load their data on first access of `data`.
+    A table from `read_mat` reads its values from the file on first use of `data`.
     """
 
     def __init__(
@@ -86,7 +84,7 @@ class Table:
         self.axes = tuple(axes) if axes is not None else (None,) * self._data.ndim
 
     @classmethod
-    def _from_file(cls, path: str, name: str, shape, unit: str, axes) -> "Table":
+    def _from_file(cls, path: str, name: str, shape, unit: str, axes) -> Table:
         table = cls.__new__(cls)
         table._data = None
         table._source = (path, name)
@@ -136,7 +134,9 @@ class Material:
             ``"full_penn/imfp"``.
     """
 
-    properties: dict[str, Quantity | str | float] = dataclasses.field(default_factory=dict)
+    properties: dict[str, Quantity | str | float] = dataclasses.field(
+        default_factory=dict
+    )
     tables: dict[str, Table] = dataclasses.field(default_factory=dict)
 
     @property
@@ -159,17 +159,7 @@ def _read_property(value) -> Quantity | str | float:
 
 
 def read_mat(file: str | os.PathLike) -> Material:
-    """Read a .mat file.
-
-    Properties and axes are read immediately; table data is read when it is
-    first used.
-
-    Args:
-        file: Path of the file.
-
-    Returns:
-        The material.
-    """
+    """Read a .mat file. Table values are read only when first used."""
     path = os.path.abspath(file)
     material = Material()
     with h5py.File(path, "r") as f:
@@ -222,7 +212,7 @@ def _check_material(file: str | os.PathLike, material: Material) -> dict:
         elif not isinstance(value, (int, float, np.integer, np.floating)) or isinstance(
             value, bool
         ):
-            raise ValueError(f"property {key} must be a Quantity, str or number")
+            raise ValueError(f"property {key} must be a Quantity, str or number")  # noqa: TRY004
 
     group_axes: dict[str, dict[str, Axis]] = {}
     for key, table in material.tables.items():
@@ -246,7 +236,9 @@ def _check_material(file: str | os.PathLike, material: Material) -> dict:
                 )
             if axis.name in axes:
                 other = axes[axis.name]
-                if other.unit != axis.unit or not np.array_equal(other.values, axis.values):
+                if other.unit != axis.unit or not np.array_equal(
+                    other.values, axis.values
+                ):
                     raise ValueError(
                         f"group {group or '/'} has different axes named {axis.name}"
                     )
@@ -259,30 +251,26 @@ def _check_material(file: str | os.PathLike, material: Material) -> dict:
 
     if os.path.exists(file):
         for key, table in material.tables.items():
-            if table._data is None and table._source is not None:
-                if os.path.samefile(file, table._source[0]):
-                    raise ValueError(
-                        f"cannot write to {file}: table {key} has not been loaded from it yet"
-                    )
+            if (
+                table._data is None
+                and table._source is not None
+                and os.path.samefile(file, table._source[0])
+            ):
+                raise ValueError(
+                    f"cannot write to {file}: table {key} has not been loaded from it yet"
+                )
     return group_axes
 
 
 def write_mat(file: str | os.PathLike, material: Material) -> None:
-    """Write a .mat file, in the same layout as cstool.
+    """Write a .mat file in the layout cstool uses, overwriting ``file``.
 
-    Tables that have not been loaded yet are copied from their file one at a
-    time, without keeping them in memory.
-
-    Args:
-        file: Path of the file. An existing file is overwritten.
-        material: The material to write.
+    Tables not yet read are copied from their file one at a time.
 
     Raises:
-        ValueError: If the material cannot be written: the number of axes of a
-            table does not match its dimensions, an axis has the wrong length,
-            axes with the same name in a group differ, a name, unit or string
-            is not ASCII, a property has an unsupported type, or ``file`` is
-            the file that not yet loaded tables are read from.
+        ValueError: If the axes do not match the tables, a text is not ASCII, a
+            property has an unsupported type, or ``file`` is the file unread
+            tables still come from.
     """
     group_axes = _check_material(file, material)
 
@@ -308,7 +296,9 @@ def write_mat(file: str | os.PathLike, material: Material) -> None:
 
         for key, table in material.tables.items():
             group, _ = _group_of(key)
-            dataset = f.create_dataset(key, data=np.asarray(table._read(), dtype=np.float64))
+            dataset = f.create_dataset(
+                key, data=np.asarray(table._read(), dtype=np.float64)
+            )
             dataset.attrs["units"] = table.unit.encode("ascii")
             for dim, axis in enumerate(table.axes):
                 if axis is not None:

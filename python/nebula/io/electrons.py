@@ -1,40 +1,22 @@
 """Binary electron files: primaries (.pri), detected electrons (.det) and energy deposits.
 
-These files have no header; they hold one fixed-size record after another.
+The files have no header, only fixed-size records one after another.
 
-Primary and detected electrons use the 36-byte `ELECTRON_DTYPE` record:
+.pri and .det files use `ELECTRON_DTYPE` (36 bytes):
 
-- ``x``, ``y``, ``z``: position in nm (float32);
-- ``dx``, ``dy``, ``dz``: direction, need not be normalised (float32);
-- ``E``: kinetic energy in eV (float32);
-- ``px``, ``py``: pixel indices (int32). Nebula does not interpret these, it only
-  copies them from a primary electron to all detected electrons it causes, so
-  they can tag electrons in any way.
+- ``x``, ``y``, ``z``: position in nm; ``dx``, ``dy``, ``dz``: direction (any
+  length); ``E``: kinetic energy in eV (all float32);
+- ``px``, ``py``: pixel indices (int32). Nebula copies them from each primary to
+  the electrons it causes, so they can tag electrons in any way.
 
-A .pri file holds the primary electrons that are input to Nebula, with their
-starting position, direction and energy. ``nebula_gpu`` and ``nebula_cpu_mt``
-write the detected electrons to standard output (normally redirected to a .det
-file), with the position, direction and energy at which they hit a detector.
-The order of detected electrons is not deterministic.
+``nebula_gpu`` and ``nebula_cpu_mt`` write the detected electrons, in no fixed
+order, to standard output. ``nebula_cpu_edep`` also writes one `DEPOSIT_DTYPE`
+record (28 bytes) per scattering event: position (nm), energy before the event
+``E`` and energy lost ``dE`` (eV), and the primary's ``px``, ``py``.
 
-``nebula_cpu_edep`` writes the detected electrons to the file given with
-``--detect-filename``, and energy deposits to ``--deposit-filename`` (standard
-output by default). These use the 28-byte `DEPOSIT_DTYPE` record, one per
-scattering event:
-
-- ``x``, ``y``, ``z``: position of the event in nm (float32);
-- ``E``: kinetic energy of the electron before the event in eV (float32);
-- ``dE``: energy lost in the event in eV (float32);
-- ``px``, ``py``: pixel indices of the primary electron (int32).
-
-Inside a material, Nebula measures kinetic energy from the bottom of the
-conduction band instead of from the vacuum level: an electron gains the
-material's ``barrier`` property when it enters the material and loses it when it
-leaves. So ``E`` in a deposit is higher than the vacuum energy by the barrier;
-a 500 eV primary electron entering silicon (barrier 12.44 eV) has ``E`` =
-512.44 eV. Energies in .pri and .det files are measured in the same way, so
-they are vacuum energies for electrons that start in, or are detected from,
-vacuum, which is the usual case.
+Inside a material, energies include its ``barrier``: a 500 eV electron in
+silicon (barrier 12.44 eV) has ``E`` = 512.44 eV. In vacuum they are the usual
+kinetic energy.
 """
 
 import os
@@ -85,20 +67,24 @@ DEPOSIT_DTYPE = np.dtype(
 
 def _check_size(n_bytes: int, dtype: np.dtype) -> None:
     if n_bytes % dtype.itemsize != 0:
-        raise ValueError(f"file size {n_bytes} is not a multiple of {dtype.itemsize} bytes")
+        raise ValueError(
+            f"file size {n_bytes} is not a multiple of {dtype.itemsize} bytes"
+        )
 
 
 def _check_pixels(pixels: np.ndarray, name: str) -> None:
     if pixels.dtype == np.int32:
         return
-    if not (np.issubdtype(pixels.dtype, np.integer) or np.all(pixels == np.round(pixels))):
+    if not (
+        np.issubdtype(pixels.dtype, np.integer) or np.all(pixels == np.round(pixels))
+    ):
         raise ValueError(f"{name} must be integers")
     info = np.iinfo(np.int32)
     if np.any(pixels < info.min) or np.any(pixels > info.max):
         raise ValueError(f"{name} must fit in an int32")
 
 
-# Records per chunk when checking values before writing
+# Records checked at a time before writing (a chunk is faster than all at once)
 _CHECK_CHUNK = 2**16
 
 
@@ -136,7 +122,6 @@ def _write_records(
         # Values too large for float32 become inf, which the check below reports
         with np.errstate(over="ignore"):
             records = recfunctions.require_fields(records, dtype)
-    # In chunks that stay in the CPU cache while each field is checked
     floats = [name for name in dtype.names or () if dtype[name].kind == "f"]
     for start in range(0, len(records), _CHECK_CHUNK):
         chunk = records[start : start + _CHECK_CHUNK]
@@ -153,19 +138,15 @@ def _write_records(
 def read_electrons(
     file: str | os.PathLike | BinaryIO, *, mmap: bool = False
 ) -> np.ndarray:
-    """Read a .pri or .det file.
+    """Read a .pri or .det file as an array with dtype `ELECTRON_DTYPE`.
 
     Args:
         file: Path of the file, or an open binary file.
-        mmap: Memory-map the file instead of reading it, for files too large to
-            fit in memory. The returned array is then read-only. Only for paths.
-
-    Returns:
-        A one-dimensional array with dtype `ELECTRON_DTYPE`.
+        mmap: Map the file into memory instead of reading it (for files larger
+            than memory); the array is then read-only. Paths only.
 
     Raises:
-        ValueError: If the file size is not a multiple of the record size.
-        TypeError: If ``mmap`` is used with a file object.
+        ValueError: If the file size is not a whole number of records.
     """
     return _read_records(file, ELECTRON_DTYPE, mmap)
 
@@ -173,19 +154,16 @@ def read_electrons(
 def write_electrons(file: str | os.PathLike | BinaryIO, electrons: np.ndarray) -> None:
     """Write a .pri or .det file.
 
-    To write a large file in parts, open it once and call this function for
-    each part with the open file.
+    To write a large file in parts, call this once per part with an open file.
 
     Args:
         file: Path of the file, or an open binary file.
-        electrons: Structured array with (at least) the fields of
-            `ELECTRON_DTYPE`. Fields are converted to the types in the file;
-            other fields are ignored.
+        electrons: Array with (at least) the fields of `ELECTRON_DTYPE`; other
+            fields are ignored.
 
     Raises:
-        ValueError: If fields are missing, the array is not one-dimensional,
-            a value is not finite, or a pixel index is not an integer in the
-            int32 range.
+        ValueError: If a field is missing, a value is not finite, or a pixel
+            index does not fit in an int32.
     """
     _write_records(file, electrons, ELECTRON_DTYPE, "electrons")
 
@@ -193,39 +171,17 @@ def write_electrons(file: str | os.PathLike | BinaryIO, electrons: np.ndarray) -
 def read_deposits(
     file: str | os.PathLike | BinaryIO, *, mmap: bool = False
 ) -> np.ndarray:
-    """Read an energy deposit file written by ``nebula_cpu_edep``.
+    """Read an energy deposit file as an array with dtype `DEPOSIT_DTYPE`.
 
-    Args:
-        file: Path of the file, or an open binary file.
-        mmap: Memory-map the file instead of reading it, for files too large to
-            fit in memory. The returned array is then read-only. Only for paths.
-
-    Returns:
-        A one-dimensional array with dtype `DEPOSIT_DTYPE`.
-
-    Raises:
-        ValueError: If the file size is not a multiple of the record size.
-        TypeError: If ``mmap`` is used with a file object.
+    Arguments as for `read_electrons`.
     """
     return _read_records(file, DEPOSIT_DTYPE, mmap)
 
 
 def write_deposits(file: str | os.PathLike | BinaryIO, deposits: np.ndarray) -> None:
-    """Write an energy deposit file.
+    """Write an energy deposit file (fields of `DEPOSIT_DTYPE`).
 
-    To write a large file in parts, open it once and call this function for
-    each part with the open file.
-
-    Args:
-        file: Path of the file, or an open binary file.
-        deposits: Structured array with (at least) the fields of
-            `DEPOSIT_DTYPE`. Fields are converted to the types in the file;
-            other fields are ignored.
-
-    Raises:
-        ValueError: If fields are missing, the array is not one-dimensional,
-            a value is not finite, or a pixel index is not an integer in the
-            int32 range.
+    Arguments as for `write_electrons`.
     """
     _write_records(file, deposits, DEPOSIT_DTYPE, "deposits")
 
@@ -236,24 +192,18 @@ def make_electrons(
     energy: npt.ArrayLike,
     pixel: npt.ArrayLike,
 ) -> np.ndarray:
-    """Make an array of electrons, such as primary electrons, from separate arrays.
+    """Make an array of electrons (`ELECTRON_DTYPE`) from separate arrays.
 
-    The arguments are broadcast against each other, so a value that is the same
-    for all electrons can be given once.
+    A value that is the same for all electrons can be given once.
 
     Args:
-        position: Positions in nm, with shape (N, 3) or (3,).
-        direction: Directions, with shape (N, 3) or (3,). Need not be normalised.
-        energy: Kinetic energies in eV, with shape (N,) or a scalar.
-        pixel: Pixel indices (px, py), with shape (N, 2) or (2,).
-
-    Returns:
-        A one-dimensional array with dtype `ELECTRON_DTYPE`.
+        position: Positions in nm, shape (N, 3) or (3,).
+        direction: Directions (any length), shape (N, 3) or (3,).
+        energy: Kinetic energies in eV, shape (N,) or a number.
+        pixel: Pixel indices (px, py), shape (N, 2) or (2,).
 
     Raises:
-        ValueError: If the shapes do not match, a value is not finite, a
-            direction is zero, an energy is not positive, or a pixel index is
-            not an integer in the int32 range.
+        ValueError: If the shapes do not match or a value is invalid.
     """
     position = np.asarray(position, dtype=np.float64)
     direction = np.asarray(direction, dtype=np.float64)
@@ -269,10 +219,16 @@ def make_electrons(
                 f"{name} must have shape (N, {columns}) or ({columns},), got {array.shape}"
             )
     if energy.ndim > 1:
-        raise ValueError(f"energy must have shape (N,) or be a scalar, got {energy.shape}")
+        raise ValueError(
+            f"energy must have shape (N,) or be a scalar, got {energy.shape}"
+        )
     try:
         (n,) = np.broadcast_shapes(
-            position.shape[:-1], direction.shape[:-1], energy.shape, pixel.shape[:-1], (1,)
+            position.shape[:-1],
+            direction.shape[:-1],
+            energy.shape,
+            pixel.shape[:-1],
+            (1,),
         )
     except ValueError:
         raise ValueError(

@@ -32,8 +32,8 @@ class Result:
         triangles: Number of triangles of the geometry.
         detected: Number of electrons Nebula detected.
         seconds: Time Nebula took.
-        zmap: Height in nm of the highest surface of the geometry at each
-            beam position, float32 ``[ix, iy]``, see `nebula.geometry.height_map`.
+        zmap: Height in nm of the top surface at each beam position, float32
+            ``[ix, iy]`` (see `nebula.geometry.height_map`).
     """
 
     images: dict[str, np.ndarray]
@@ -59,18 +59,15 @@ def run(
 
     Args:
         config: The run, from `nebula.config.load_config`.
-        gpu: True for nebula_gpu, False for nebula_cpu_mt, None to use
-            nebula_gpu if there is a GPU.
-        workdir: Directory to keep Nebula's input and output files in; by
-            default they are removed.
-        report: Called with a line of text about each step: the scan, the
-            geometry and the binary before Nebula starts, and the detectors
-            after it.
+        gpu: True for nebula_gpu, False for nebula_cpu_mt, None for nebula_gpu
+            if there is a GPU.
+        workdir: Directory to keep Nebula's files in; by default they are removed.
+        report: Called with one line of text per step, before Nebula starts.
         progress: Called while Nebula runs, see `nebula.runner.run_nebula`.
 
     Raises:
         ValueError: If the beam does not start between the surface and the
-            detector plane, or outside the box.
+            detector plane, or the scan does not fit in the geometry.
     """
     geometry, beam = config.geometry, config.beam
     made = _geometry(geometry)
@@ -83,7 +80,7 @@ def run(
             f"and below the detector plane ({detector_z} nm)"
         )
 
-    # Scan: the given area (its outer edges), or the geometry's default
+    # The scan from [beam], or by default the whole geometry
     x = beam.x if beam.x is not None else made.scan_x
     y = beam.y if beam.y is not None else made.scan_y
     step = beam.step if beam.step is not None else made.step
@@ -156,7 +153,7 @@ def run(
 
 
 class _Geometry(NamedTuple):
-    """Triangles of a run, with what the scan needs to know about them (in nm)."""
+    """The triangles of a run and the limits they set for the scan, in nm."""
 
     triangles: np.ndarray
     surface_top: float  # the beam must start above this
@@ -170,12 +167,8 @@ class _Geometry(NamedTuple):
 def _geometry(geometry: ZmapGeometry | TriGeometry) -> _Geometry:
     """Make or read the triangles of a geometry.
 
-    A triangle file's box, and default scan, is the x-y extent of its
-    triangles. A z-map's box is its box size, and its default scan its
-    own pixels.
-
-    Raises:
-        ValueError: If a triangle file uses more materials than are given.
+    For a triangle file, the box and default scan are the x-y extent of the
+    triangles; for a z-map, its box size and its own pixels.
     """
     if isinstance(geometry, TriGeometry):
         triangles = read_tri(geometry.file)
@@ -222,7 +215,7 @@ def _geometry(geometry: ZmapGeometry | TriGeometry) -> _Geometry:
 
 
 def _detector_z(triangles: np.ndarray) -> float:
-    """Height in nm of the lowest detector triangle, the plane the beam must stay below."""
+    """Height in nm of the detector plane (its lowest triangle); the beam starts below it."""
     detector = (triangles["material_in"] == SpecialMaterial.DETECTOR) | (
         triangles["material_out"] == SpecialMaterial.DETECTOR
     )
@@ -241,14 +234,12 @@ def _count(n: int) -> str:
 
 
 def save_results(path: str | os.PathLike, config: Config, result: Result) -> None:
-    """Save the yields of a run as a safetensors file.
+    """Save the results of a run as a safetensors file.
 
-    The file holds one float32 image ``[ix, iy]`` per detector, named after
-    it, ``primaries`` (int32, primary electrons per pixel), and ``x`` and
-    ``y`` (float32, pixel centres in nm). ``zmap`` (float32 ``[ix, iy]``)
-    holds the height in nm of the highest surface of the geometry at each
-    beam position. Its metadata holds the TOML text,
-    the Nebula binary, the seed and the gldg-nebula version.
+    Images are float32 ``[ix, iy]``: one yield map per detector (named after
+    it) and ``zmap`` (surface height in nm). ``primaries`` (int32) is the
+    number of primaries per pixel and ``x``, ``y`` (float32) the pixel centres
+    in nm. The metadata holds the run file, binary, seed and package version.
     """
     from safetensors.numpy import save_file
 

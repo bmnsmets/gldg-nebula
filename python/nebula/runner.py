@@ -1,4 +1,4 @@
-"""Running the Nebula binaries: finding them and their material files."""
+"""Finding the Nebula binaries and material files, and running Nebula."""
 
 import contextlib
 import os
@@ -23,7 +23,7 @@ __all__ = [
     "stream_nebula",
 ]
 
-# The repository this package is part of, for its build folder
+# The repository root, whose build/ folder holds the binaries and materials
 _REPOSITORY = Path(__file__).resolve().parents[2]
 
 
@@ -116,11 +116,10 @@ def run_nebula(
     workdir: str | os.PathLike | None = None,
     progress: Callable[[float | None], None] | None = None,
 ) -> np.ndarray:
-    """Run Nebula and return the detected electrons.
+    """Run Nebula and return the detected electrons (`ELECTRON_DTYPE`).
 
-    The geometry and primary electrons are written to files in ``workdir``
-    (by default a temporary directory that is removed afterwards), together
-    with the detected electrons (output.det) and Nebula's log (nebula.log).
+    The input files, the output (output.det) and Nebula's log (nebula.log) are
+    written to ``workdir``, by default a temporary directory.
 
     Args:
         triangles: Geometry, with dtype `TRIANGLE_DTYPE`.
@@ -129,12 +128,8 @@ def run_nebula(
         seed: Random seed for Nebula.
         binary: Path of nebula_gpu or nebula_cpu_mt.
         workdir: Directory to keep the files in.
-        progress: Called while Nebula runs, with the fraction of primary
-            electrons it has started simulating (0 to 1), or with None while
-            nebula_gpu does its pre-scan. Nebula reports this once a second.
-
-    Returns:
-        The detected electrons, with dtype `ELECTRON_DTYPE`.
+        progress: Called about once a second with the fraction (0 to 1) of
+            primaries Nebula has started, or None during nebula_gpu's pre-scan.
 
     Raises:
         RuntimeError: If Nebula fails; the message includes its log.
@@ -167,25 +162,23 @@ def stream_nebula(
     workdir: str | os.PathLike | None = None,
     progress: Callable[[float | None], None] | None = None,
 ) -> int:
-    """Run Nebula, passing the detected electrons on in batches as they come.
+    """Like `run_nebula`, but pass the detected electrons on in batches while it runs.
 
-    Like `run_nebula`, but the detected electrons are not stored: they are
-    read from Nebula's output while it runs, and ``on_detected`` is called
-    with each batch (in order, from another thread). Only with ``workdir``
-    are they also written to output.det there.
+    The electrons are not kept; with ``workdir`` they are also written to
+    output.det there.
 
     Args:
         triangles, primaries, materials, seed, binary, workdir, progress:
             See `run_nebula`.
-        on_detected: Called with each batch of detected electrons, an array
-            with dtype `ELECTRON_DTYPE` that it may keep but not change.
+        on_detected: Called, in order and from another thread, with each batch
+            (`ELECTRON_DTYPE`), which it may keep but not change.
 
     Returns:
         The number of detected electrons.
 
     Raises:
         RuntimeError: If Nebula fails; the message includes its log.
-        Exception: What ``on_detected`` raised, once Nebula has finished.
+        Exception: Whatever ``on_detected`` raised, once Nebula has finished.
     """
     with tempfile.TemporaryDirectory(prefix="nebula-") as temporary:
         directory = Path(workdir if workdir is not None else temporary)
@@ -231,7 +224,7 @@ def _write_inputs(
     seed: int,
     binary: str | os.PathLike,
 ) -> list[str]:
-    """Write the geometry and primaries to directory; the command to run Nebula."""
+    """Write the geometry and primaries to directory and return Nebula's command line."""
     directory.mkdir(parents=True, exist_ok=True)
     write_tri(directory / "geometry.tri", triangles)
     write_electrons(directory / "primaries.pri", primaries)
@@ -257,11 +250,10 @@ _READ_SIZE = 2**20
 
 
 class _DetectedReader(threading.Thread):
-    """Reads detected electrons from Nebula's stdout and passes them on.
+    """Reads detected electrons from Nebula's output and passes them on.
 
-    It reads until Nebula closes its output, also after ``on_detected`` or
-    the copy failed (the first error is kept in ``error``), so that Nebula
-    never blocks on a full pipe.
+    It keeps reading after an error (kept in ``error``), so that Nebula never
+    waits on a full pipe.
     """
 
     def __init__(self, stream, on_detected: Callable[[np.ndarray], None], copy) -> None:
@@ -280,7 +272,7 @@ class _DetectedReader(threading.Thread):
 
             fcntl.fcntl(fd, fcntl.F_SETPIPE_SZ, _READ_SIZE)
         except ImportError, AttributeError, OSError:
-            pass  # not Linux, or the size is above the limit: a smaller pipe
+            pass  # not Linux, or too large: keep the default pipe size
         size = ELECTRON_DTYPE.itemsize
         rest = np.empty(0, np.uint8)  # an incomplete record from the last read
         while True:
@@ -312,10 +304,10 @@ _PROGRESS = re.compile(r"Progress (\d+(?:\.\d+)?)%")
 
 
 def _follow_log(stream, log, progress: Callable[[float | None], None] | None) -> None:
-    """Copy Nebula's stderr to the log, reporting its progress as it comes.
+    """Copy Nebula's stderr to the log and report its progress.
 
-    Nebula rewrites one line with carriage returns: "Executing pre-scan ..."
-    (nebula_gpu) and then "Progress 12.34%" once a second.
+    Nebula overwrites one line: "Executing pre-scan ..." (nebula_gpu), then
+    "Progress 12.34%" once a second.
     """
     last: float | None | str = "nothing"  # the last value reported
     line = ""  # text since the last carriage return or newline

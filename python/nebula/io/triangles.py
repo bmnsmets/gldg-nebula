@@ -5,18 +5,14 @@ columns::
 
     material_in material_out x0 y0 z0 x1 y1 z1 x2 y2 z2
 
-Coordinates are in nm. ``material_in`` is the material on the side the normal
-``(r1 - r0) x (r2 - r0)`` points away from, ``material_out`` the material on the
-side it points towards. Non-negative material ids index the .mat files passed to
-Nebula; negative ids are the special materials in `SpecialMaterial`. Blank lines
-and lines starting with ``#`` are ignored.
+Coordinates are in nm. The normal ``(r1 - r0) x (r2 - r0)`` points from
+``material_in`` to ``material_out``. Material ids 0, 1, ... are the .mat files
+given to Nebula; negative ids are `SpecialMaterial`. Blank lines and lines
+starting with ``#`` are ignored.
 
-In numpy, triangles are stored as a structured array with `TRIANGLE_DTYPE`:
-
-- ``material_in``, ``material_out``: material ids (int32);
-- ``vertices``: float32 with shape (3, 3), indexed [vertex, xyz], in nm. For an
-  array of N triangles, ``triangles["vertices"]`` has shape (N, 3, 3). Nebula
-  uses single precision, so this is the precision it simulates with.
+In numpy, triangles are an array with `TRIANGLE_DTYPE`: ``material_in`` and
+``material_out`` (int32), and ``vertices`` (float32, shape (3, 3) as [vertex,
+xyz], in nm). float32 is the precision Nebula simulates with.
 """
 
 import enum
@@ -72,13 +68,7 @@ def _check_material_ids(materials: np.ndarray, name: str) -> None:
 
 
 def read_tri(file: str | os.PathLike | IO[str]) -> np.ndarray:
-    """Read a .tri file.
-
-    Args:
-        file: Path of the file, or an open text file.
-
-    Returns:
-        A one-dimensional array with dtype `TRIANGLE_DTYPE`.
+    """Read a .tri file (a path or an open text file) as an array with `TRIANGLE_DTYPE`.
 
     Raises:
         ValueError: If a line does not have 11 columns, or a material id is not
@@ -106,21 +96,16 @@ def read_tri(file: str | os.PathLike | IO[str]) -> np.ndarray:
 
 
 def write_tri(file: str | os.PathLike | IO[str], triangles: np.ndarray) -> None:
-    """Write a .tri file.
-
-    Coordinates are written in the shortest form that reads back to the same
-    float32 value, so that `read_tri` returns exactly the same values.
+    """Write a .tri file; `read_tri` gives back exactly the same float32 values.
 
     Args:
         file: Path of the file, or an open text file.
-        triangles: Structured array with (at least) the fields of
-            `TRIANGLE_DTYPE`. Fields are converted to the types of
-            `TRIANGLE_DTYPE`; other fields are ignored.
+        triangles: Array with (at least) the fields of `TRIANGLE_DTYPE`; other
+            fields are ignored.
 
     Raises:
-        ValueError: If fields are missing, the array is not one-dimensional,
-            a coordinate is not finite, or a material id is not an integer in
-            the int32 range.
+        ValueError: If a field is missing, a coordinate is not finite, or a
+            material id does not fit in an int32.
     """
     triangles = np.asarray(triangles)
     names = triangles.dtype.names or ()
@@ -162,19 +147,15 @@ def write_tri(file: str | os.PathLike | IO[str], triangles: np.ndarray) -> None:
 
 
 def make_triangles(vertices: npt.ArrayLike, materials: npt.ArrayLike) -> np.ndarray:
-    """Make an array of triangles from separate arrays.
+    """Make an array of triangles (`TRIANGLE_DTYPE`) from separate arrays.
 
     Args:
-        vertices: Triangle vertices in nm, with shape (N, 3, 3) or (N, 9).
-        materials: Material ids (material_in, material_out), with shape (N, 2),
-            or (2,) to use the same materials for all triangles.
-
-    Returns:
-        A one-dimensional array with dtype `TRIANGLE_DTYPE`.
+        vertices: Vertices in nm, shape (N, 3, 3) or (N, 9).
+        materials: (material_in, material_out) per triangle, shape (N, 2), or
+            (2,) for the same pair for all.
 
     Raises:
-        ValueError: If the arrays have the wrong shape, a coordinate is not
-            finite, or a material id is not an integer in the int32 range.
+        ValueError: If a shape is wrong or a value is invalid.
     """
     vertices = np.asarray(vertices, dtype=np.float64)
     if vertices.ndim not in (2, 3) or vertices.shape[1:] not in ((3, 3), (9,)):

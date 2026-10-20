@@ -13,7 +13,13 @@ from .electrons import (
     write_electrons,
 )
 from .materials import Axis, Material, Quantity, Table, read_mat, write_mat
-from .triangles import TRIANGLE_DTYPE, SpecialMaterial, make_triangles, read_tri, write_tri
+from .triangles import (
+    TRIANGLE_DTYPE,
+    SpecialMaterial,
+    make_triangles,
+    read_tri,
+    write_tri,
+)
 
 __all__ = [
     "DEPOSIT_DTYPE",
