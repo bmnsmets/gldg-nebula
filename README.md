@@ -26,7 +26,6 @@ Additionally this fork contains a user-friendly cli font-end for calling the Neb
 ## Building
 
 ```
-uv sync
 cmake -S . -B build
 cmake --build build -j
 ```
@@ -99,6 +98,13 @@ After [building](#building) (the material files used must be in
 ```
 uv run nebula examples/z-map/cell65.toml --plot
 ```
+
+or after activating the virtual environment:
+
+```
+nebula examples/z-map/cell65.toml --plot
+```
+
 
 This turns the PNG into a triangle mesh, makes the primary electrons for the
 beam scan, runs `nebula_gpu` (or `nebula_cpu_mt` if there is no GPU; `--cpu`
